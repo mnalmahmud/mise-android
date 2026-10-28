@@ -2,13 +2,12 @@
 
 ## 0.1.0
 
-Initial standalone backend for mise:
+First release.
 
-- Install an Android platform alone or add explicitly selected SDK components.
-- Keep complete SDKs and individual packages in separate mise installations.
-- Discover package versions from repository XML, filtered by host and channel.
-- Reuse Android CLI from `PATH` or download and checksum-verify a private copy.
-- Resolve packages before installation, verify the final SDK, and write an atomic manifest.
-- Export the selected installation's environment without writing files during activation.
-- Bound metadata reads, cache metadata, and terminate timed-out installer process groups.
-- Exercise offline behavior and real mise integration, with Linux/macOS CI configured.
+- Install Android SDKs and add only the tools you choose.
+- Install tools such as `adb` and the NDK on their own.
+- Keep each installation in a separate folder.
+- Switch projects with mise setting the Android paths for you.
+- Use an existing `android` command or download a checked copy from Google.
+- Check installed versions and stop installations that take too long.
+- Include automated checks for Linux and macOS.

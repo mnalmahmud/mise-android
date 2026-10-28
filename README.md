@@ -1,32 +1,28 @@
 # mise-android
 
-A [mise](https://mise.jdx.dev/) backend for Android SDKs and individual SDK packages.
-Lua hooks call a Python implementation that uses only the standard library.
+Install and switch Android SDKs with [mise](https://mise.jdx.dev/).
 
-Each installation owns its SDK files. Selecting a complete SDK sets `ANDROID_HOME`
-and adds its tools to `PATH`. An included NDK also sets `ANDROID_NDK_HOME`.
-Activation reads the installation manifest without changing files.
+Each SDK gets its own folder. You can also install tools such as `adb` or the NDK
+on their own.
 
-## Requirements
+## What you need
 
-- mise 2026.10.19 or newer, with experimental backends enabled.
-- Python 3.10 or newer on `PATH` as `python3`.
-- Linux or macOS on x64 or ARM64. Packages must be available for the host.
+- mise 2026.10.19 or newer.
+- Python 3.10 or newer, available as `python3`.
+- Linux or macOS, on x64 or ARM64.
 
-The backend uses an executable named `android` on `PATH`, skipping mise shims.
-Otherwise it downloads Google's Android CLI into its own cache and verifies the
-published SHA-256. Automatic CLI downloads support Linux x64 and macOS x64/ARM64.
-Linux ARM64 requires an existing compatible CLI. Windows is unsupported.
+If Google's `android` command is already installed, this plugin uses it. Otherwise,
+it downloads a copy and checks that the file matches what Google published.
+On Linux ARM64, you need to provide the `android` command yourself. Windows is not
+supported.
 
-## Setup
-
-Install the backend:
+## Install
 
 ```sh
 mise plugins install vfox-backend:android https://github.com/mnalmahmud/mise-android
 ```
 
-Create a `mise.toml`:
+Add this to your project's `mise.toml`:
 
 ```toml
 [settings]
@@ -40,131 +36,134 @@ experimental = true
 "android:sdk" = "36"
 ```
 
-Run `mise install`. This installs the Android 36 platform only.
-To include other components, replace the SDK entry with an explicit package table:
+Then run:
 
-```toml
-"android:sdk" = { version = "36", packages = { platform-tools = "latest", build-tools = "36.0.0", ndk = "latest" } }
+```sh
+mise install
 ```
 
-Then reinstall and check the selected platform-tools:
+This installs only SDK platform 36.
+
+## Add tools to an SDK
+
+Replace the `android:sdk` line with the tools you need:
+
+```toml
+"android:sdk" = { version = "36", packages = { platform-tools = "latest", ndk = "latest" } }
+```
+
+`platform-tools` includes `adb`. The NDK provides tools for C and C++ code. You can
+also add packages such as `build-tools = "36.0.0"`.
+
+Use a version number to keep a particular version, or `latest` to choose the newest
+available version when you install. Nothing else is added unless you ask for it.
+
+After changing the package list, run:
 
 ```sh
 mise install --force android:sdk
 mise exec -- adb version
 ```
 
-The backend does not accept SDK licenses on your behalf. License handling belongs
-to Google's tooling.
+Run the same install command to update packages set to `latest`. Upgrading the SDK's
+platform number does not update packages inside an existing installation.
 
-## Complete SDKs
+## Use the SDK in a project
 
-`android:sdk` versions are Android API levels. The corresponding platform is always
-installed. Omitting `packages`, or setting `packages = {}`, adds no other components.
-Package versions can be pinned or set to `latest`, which is resolved at installation.
+mise sets `ANDROID_HOME` to the selected SDK's folder and makes its commands
+available. If the SDK includes an NDK, mise also sets `ANDROID_NDK_HOME`. With
+multiple NDK versions, it chooses the highest version.
 
-Use a name when the same API level needs different component sets:
+Let mise set these values instead of adding them to your shell settings or the
+`[env]` section of `mise.toml`. Choose one complete SDK per project.
+
+If two projects need different tools for the same SDK platform, give each SDK
+a name:
 
 ```toml
-"android:sdk/native" = { version = "36", packages = { ndk = "latest" } }
+"android:sdk/my-project" = { version = "36", packages = { ndk = "latest" } }
 ```
 
-Another project can use a different name, such as `sdk/mobile`, for its component
-set. Names create separate installation identities. Activate one complete SDK at a
-time so `ANDROID_HOME` has one owner. Let the backend supply Android environment
-variables instead of hardcoding them in shell startup files or mise's `[env]` table.
-If an SDK contains multiple NDK revisions, `ANDROID_NDK_HOME` selects the highest.
-An SDK without an NDK does not set that variable.
-
-After changing `packages` or `channel`, reinstall the affected entry. Reinstall also
-refreshes components set to `latest`; upgrading the SDK API level is a separate step.
-For a named SDK:
+Another project can choose a different name and package list. To reinstall a named
+SDK, use its full name:
 
 ```sh
-mise install --force android:sdk/native
+mise install --force android:sdk/my-project
 ```
 
-## Individual packages
+## Install one tool
 
-Standalone packages expose their own executables without setting `ANDROID_HOME` or
-joining other installations. A standalone NDK also sets `ANDROID_NDK_HOME`.
+For example, to install an NDK without a complete SDK:
 
-| Tool | Version selects |
+```toml
+"android:ndk" = "30.0.16248370"
+```
+
+Each tool stays in its own folder. Separate tools are not combined into an SDK and
+do not set `ANDROID_HOME`. An NDK still sets `ANDROID_NDK_HOME`.
+
+| Name in `mise.toml` | What the version number means |
 | --- | --- |
-| `android:sdk`, `android:sdk/NAME` | Android API level |
-| `android:platform-tools`, `android:emulator` | Package revision |
-| `android:ndk`, `android:build-tools`, `android:cmdline-tools`, `android:cmake` | Versioned package directory |
-| `android:platforms/android-36` | Revision of that exact platform package |
-| `android:system-images/android-36/google_apis/x86_64` | Revision of that exact image package |
+| `android:sdk` or `android:sdk/NAME` | SDK platform number, such as `36` |
+| `android:platform-tools`, `android:emulator` | Version of the tool |
+| `android:ndk`, `android:build-tools`, `android:cmdline-tools`, `android:cmake` | Version of the tool |
+| `android:platforms/android-36` | Version of that platform package, not its platform number |
+| `android:system-images/android-36/google_apis/x86_64` | Version of that emulator image |
 
-Use slashes in package identifiers, including keys in `packages`.
-List available versions before choosing one:
+List available versions with:
 
 ```sh
 mise ls-remote android:ndk
 ```
 
-Discovery reads Google's repository XML and filters by host and release channel.
-Only revisions present in that metadata can be selected. Stable excludes previews.
-For another channel:
+The list comes from Google and includes packages for your machine.
+
+## Other settings
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `packages` | Empty | Adds the listed tools to `android:sdk` |
+| `channel` | `"stable"` | Choose `stable`, `beta`, or `canary` releases |
+| `timeout` | `1800` | Stop an installation after this many seconds; allowed range is 1–86400 |
+| `repository_url` | Google's package list | Read the package list from another HTTPS address or a local `file://` address |
+
+For example, to use preview NDK releases:
 
 ```toml
 "android:ndk" = { version = "latest", channel = "canary" }
 ```
 
-Preview suffixes remain part of the version. mise's prerelease selection rules still
-apply; pin a preview or configure mise to include prereleases when needed.
+You may also need to allow previews in mise or request a specific preview version.
+Reinstall after changing `channel`. Changing `repository_url` changes the package
+list, not where Google's `android` command downloads packages.
 
-## Options
-
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `packages` | No additions | SDK component names mapped to versions; complete SDKs only |
-| `channel` | `"stable"` | `stable`, `beta`, or `canary` |
-| `timeout` | `1800` | Installer timeout in seconds, from 1 to 86400 |
-| `repository_url` | Google's repository for the package | HTTPS metadata URL or absolute local `file://` URL |
-
-Unknown options and invalid values are rejected. `repository_url` changes discovery
-metadata only; Android CLI still controls package download sources.
-
-## Storage and verification
-
-Each mise installation contains `sdk/` and `.mise-android-package.json`. The backend
-resolves all requested packages before starting one installer command, passes that
-SDK directory explicitly, and checks the final package revisions. It also checks
-package identities when `package.xml` is present. The manifest is written only after
-verification succeeds. Timeouts terminate the installer process group.
-
-The manifest records selected archive URLs and published checksums as provenance.
-SDK archive downloads and their verification are delegated to Android CLI; the
-backend does not independently verify those downloaded archives. An existing CLI
-on `PATH` is trusted as a user-provided executable. A downloaded CLI is checked
-against Google's SHA-256 file before installation and against its cached digest
-before reuse.
-
-Metadata is cached for one hour. Local metadata files are read directly. The cache
-lives under an absolute `$XDG_CACHE_HOME/mise-android`, or defaults to
-`~/.cache/mise-android` on Linux and `~/Library/Caches/mise-android` on macOS.
-Google's launcher can maintain additional runtime files in the Android user directory.
-
-There are no shared SDK links, imports from existing SDKs, or global ownership
-records. mise removes installations and cleans up failed installs:
+## Remove an installation
 
 ```sh
 mise uninstall android:sdk@36
-mise prune --dry-run
 ```
 
-mise's custom backend protocol does not record SDK archive digests in `mise.lock`.
-The repository entries do not provide release timestamps, so mise cannot check
-minimum release age for them. Android Studio, AVD configuration, running emulators,
-and application dependencies are outside this backend's scope.
+mise removes that installation's folder. Your other SDKs are left alone. Switching
+between installed versions does not move or rewrite SDK files.
 
-## Development
+## What this plugin handles
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture, local setup, and checks.
-CI is configured for Linux and macOS; local Linux checks do not establish macOS support.
+Google's `android` command downloads the SDK packages and handles their licenses.
+This plugin checks the installed versions before marking an installation complete.
+It does not accept licenses for you or check SDK download files itself.
+
+Downloaded copies of the `android` command are kept under `$XDG_CACHE_HOME/mise-android`
+when that setting is an absolute path. Otherwise, they go in `~/.cache/mise-android`
+on Linux or `~/Library/Caches/mise-android` on macOS. Package lists are saved for an
+hour to avoid repeated downloads. Google's command may also save files in your
+Android user folder.
+
+This plugin does not set up Android Studio, create virtual devices, or manage your
+app's dependencies. mise's lock file does not save SDK download checksums, and
+Google's package lists do not provide dates for mise's release-age check.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to work on the plugin.
 
 ## License
 
-[MIT](LICENSE). Downloaded Android components retain their upstream licenses.
+[MIT](LICENSE). Android tools keep their own licenses.

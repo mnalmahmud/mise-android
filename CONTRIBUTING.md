@@ -1,51 +1,11 @@
 # Contributing
 
-Keep the backend small and its behavior explicit. Runtime dependencies are Python's
-standard library and mise's Lua modules. Use tests that run offline and leave a
-developer's SDKs and configuration untouched.
+Keep changes small, the code easy to follow, and the README accurate.
+The plugin uses Python's standard library and the Lua tools included with mise.
 
-## Local setup
+## Run the checks
 
-Create a temporary project with a `mise.toml`, enable `experimental`, and link this
-checkout as the backend:
-
-```sh
-mise plugins link android /absolute/path/to/mise-android
-```
-
-On mise 2026.10.19, an explicit link is required for local development; a local path
-in `[plugins]` alone does not install the backend. Use a disposable project directory
-and mise data, cache, and state directories when exercising installation manually.
-The integration tests already provide that isolation.
-
-## Architecture
-
-The Lua hooks pass JSON requests through the environment to `lib/android_backend.py`.
-That entry point handles the protocol and reports expected errors to mise. The
-implementation lives in `lib/android_mise/`:
-
-| Module | Owns |
-| --- | --- |
-| `model.py` | Request validation, package identifiers, revisions, options |
-| `catalog.py` | Repository XML, host/channel filtering, version discovery |
-| `network.py` | URL policy, bounded reads, metadata cache location and lifetime |
-| `bootstrap.py` | CLI discovery, download locking, checksum-verified CLI caching |
-| `android_cli.py` | Installer arguments, execution, timeout cleanup |
-| `backend.py` | Package planning, installation, activation environment |
-| `storage.py` | Atomic writes, manifests, installed-package metadata checks |
-
-Installation resolves the complete plan, invokes Android CLI once, verifies every
-requested package, and atomically writes the manifest. A failed plan must not start
-the installer. A failed installer or verification must not commit a manifest.
-
-Activation must remain read-only and work without network access or CLI execution.
-mise caches its output. Keep SDK files under the installation directory supplied by
-mise; do not introduce shared links, a shared mutable SDK, or a cleanup database.
-Standalone packages must remain independent of complete SDKs.
-
-## Checks
-
-From the checkout, run:
+From the project folder:
 
 ```sh
 python3 -m venv .venv
@@ -56,23 +16,59 @@ MISE_ANDROID_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/ruff format --check lib tests
 ```
 
-Integration tests require a real mise binary on `PATH`; set `MISE_BIN` to choose a
-specific executable. They use temporary directories, local repository XML, and a
-small test CLI. They must not download SDK archives or accept licenses.
+The second test command also tests the plugin through mise. It needs `mise` on your
+command search path. Set `MISE_BIN` to use a different mise executable.
 
-Test repository changes with representative XML under `tests/data/`. Cover host
-selection, channels, previews, and malformed metadata. Test installer failures and
-final verification, including subprocess cleanup when changing execution behavior.
-Run real-mise integration tests after changing hooks, options, layout, or activation.
-mise passes scalar options to hooks as strings, including TOML integers and booleans.
+Tests use temporary folders and a small replacement for Google's `android` command.
+They must not download Android SDK packages, accept licenses, or change a real SDK.
+GitHub runs the checks on Linux and macOS with Python 3.10 and 3.14. It also tests
+both the oldest supported mise release and the current stable release.
 
-CI checks Python 3.10 and 3.14 on Linux and macOS, with separate integration jobs for
-the minimum supported mise release and the action's current stable default. A green
-Linux run does not substitute for macOS validation.
+## Find the code
 
-## Changes and bug reports
+| File or folder | What it does |
+| --- | --- |
+| `hooks/` and `lib/bridge.lua` | Receive calls from mise and pass them to Python |
+| `lib/android_backend.py` | Read the request, run it, and return a result or error |
+| `lib/android_mise/model.py` | Check settings, names, and version numbers |
+| `lib/android_mise/catalog.py` | Read Google's package lists and find suitable versions |
+| `lib/android_mise/network.py` | Download files and save temporary copies of package lists |
+| `lib/android_mise/bootstrap.py` | Find or download Google's `android` command |
+| `lib/android_mise/android_cli.py` | Run that command and stop it if it takes too long |
+| `lib/android_mise/backend.py` | Decide what to install and what settings a project needs |
+| `lib/android_mise/storage.py` | Save installation records and check installed packages |
+| `tests/data/` | Sample package lists and the test `android` command |
 
-Describe the observed problem, resulting behavior, and checks performed. Keep
-README examples aligned with the implementation. Include OS, Python and mise
-versions, the tool identifier, a minimal configuration, and relevant error output
-when reporting a bug. Remove credentials and other private values from reports.
+## Keep these rules
+
+- Find every requested package before starting an installation.
+- Check the result before saving a successful installation record.
+- Keep each SDK inside the folder mise provides for it.
+- Read files when switching SDKs; do not change them or contact Google.
+- Keep separately installed tools independent of SDKs.
+- Leave the user's shell settings and existing SDKs alone.
+
+When changing package-list handling, test missing and invalid entries, previews,
+and packages for different machines. When changing installation, test failures as
+well as success. Run the tests through mise after changing settings or how the
+plugin is called. mise passes simple settings as strings, even TOML numbers and
+booleans.
+
+## Try a local copy
+
+Use a temporary project and link this checkout:
+
+```sh
+mise plugins link android /absolute/path/to/mise-android
+```
+
+Add the settings and tools from the README to the temporary project's `mise.toml`.
+On mise 2026.10.19, the link command is required; a local path in `[plugins]` alone
+is not enough. Use separate mise data, cache, and state folders for manual testing,
+just as the tests do.
+
+## Report a problem
+
+Include your OS, Python and mise versions, the relevant `mise.toml` settings, the
+command you ran, and its error output. Remove private values before sharing them.
+For a code change, explain what was wrong, what changed, and which checks passed.
