@@ -59,7 +59,7 @@ function M.parse(source)
 	if type(source) ~= "string" or #source > 16777216 then
 		error("XML exceeds 16 MiB")
 	end
-	source = source:gsub("^\239\187\191", "")
+	source = source:gsub("^\239\187\191", ""):gsub("\r\n", "\n"):gsub("\r", "\n")
 	local stack, root, position = {}, nil, 1
 	local function append(text, raw)
 		if #stack == 0 then
@@ -185,6 +185,28 @@ end
 function M.text(node, name)
 	local child = M.child(node, name)
 	return child and child.text:match("^%s*(.-)%s*$") or ""
+end
+
+function M.serialize(node)
+	local function escape(value)
+		return (value:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+	end
+	local tag = node.qualified or node.name
+	local result = { "<" .. tag }
+	local keys = {}
+	for key in pairs(node.attrs or {}) do
+		keys[#keys + 1] = key
+	end
+	table.sort(keys)
+	for _, key in ipairs(keys) do
+		result[#result + 1] = " " .. key .. '="' .. escape(node.attrs[key]) .. '"'
+	end
+	result[#result + 1] = ">" .. escape(node.text or "")
+	for _, child in ipairs(node.children or {}) do
+		result[#result + 1] = M.serialize(child)
+	end
+	result[#result + 1] = "</" .. tag .. ">"
+	return table.concat(result)
 end
 
 return M

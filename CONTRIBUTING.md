@@ -3,7 +3,7 @@
 ## Checks
 
 Tests use Python and a real mise executable. They run the Lua checks through mise,
-using temporary folders, local package lists, and a test Android command.
+using temporary folders, local package lists, and small ZIP archives.
 
 ```sh
 python3 -m venv .venv
@@ -23,18 +23,20 @@ release.
 | Location | Purpose |
 | --- | --- |
 | `hooks/` | Receive calls from mise |
-| `lib/android.lua` | Find the Android command, check project requests, and install or remove packages |
-| `lib/sdk.lua` | Locate the shared SDK, read installed packages, save receipts, and return project paths |
+| `lib/android.lua` | Resolve project requests and check dependency requirements |
+| `lib/sdk.lua` | Locate the SDK, read installed packages, save receipts, and return project paths |
+| `lib/installer.lua` | Verify archives, prepare packages, replace installed files, and remove packages |
+| `lib/lock.lua` | Keep SDK updates from overlapping and recover abandoned locks |
 | `lib/common.lua` | Check settings, compare versions, download files, and save records |
 | `lib/catalog.lua` | Read Google's package lists and select suitable versions |
 | `lib/xml.lua` | Read the XML used by the package lists |
 | `tests/unit.lua` | Check Lua behavior in mise's interpreter |
 | `tests/test_integration.py` | Test complete operations through mise |
-| `tests/data/` | Sample package lists and the test Android command |
+| `tests/data/` | Sample package lists and the ZIP archive generator |
 
 ## Making changes
 
-Resolve project requests and check dependency minimums before starting the installer.
+Resolve project requests and check dependency minimums before downloading archives.
 Check installed versions and names before saving the tool's installation receipt.
 
 Keep all packages in mise's shared `android/sdk` folder. Read Google's package
@@ -47,9 +49,10 @@ invalidate mise's cached environment results after updating the SDK. Test a vers
 change after activation has already populated that cache.
 
 Cover package-list errors, preview releases, and downloads for different machines
-when changing version selection. Cover failures and timeouts when changing
-installation. Run the tests through mise after changing settings or hooks. mise
-passes simple settings as strings, including TOML numbers and booleans.
+when changing version selection. Cover checksum failures, interrupted downloads,
+failed replacements, and overlapping installations when changing installation.
+Run the tests through mise after changing settings or hooks. mise passes simple
+settings as strings, including TOML numbers and booleans.
 
 ## Local testing
 

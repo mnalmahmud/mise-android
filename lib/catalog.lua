@@ -2,6 +2,7 @@ local common = require("common")
 local xml = require("xml")
 local M = {}
 local repositories = {}
+local linux_native = { ndk = true, ["platform-tools"] = true, ["build-tools"] = true, cmake = true, emulator = true }
 M.default_url = "https://dl.google.com/android/repository/repository2-3.xml"
 
 function M.repository_url(tool, options)
@@ -27,8 +28,8 @@ local function archive(node, system, architecture, path)
 		if item.name == "archive" then
 			local os_name, cpu, bits =
 				xml.text(item, "host-os"), xml.text(item, "host-arch"), xml.text(item, "host-bits")
-			-- Google's Linux NDK archives omit host-arch but contain x86-64 binaries.
-			if cpu == "" and os_name == "linux" and path:match("^ndk/") then
+			-- These native Linux packages omit host-arch in older repository entries.
+			if cpu == "" and os_name == "linux" and linux_native[path:match("^[^/]+")] then
 				cpu = "x64"
 			end
 			if (os_name == "" or os_name == host) and (cpu == "" or cpu == arch) and (bits == "" or bits == "64") then
@@ -64,7 +65,9 @@ local function package_revision(node, path)
 		if not preview:match("^%d+$") then
 			error("Invalid preview version for " .. path)
 		end
-		result = result .. "-rc." .. preview
+		if tonumber(preview) > 0 then
+			result = result .. "-rc." .. preview
+		end
 	end
 	return common.revision(result)
 end
@@ -118,6 +121,58 @@ local function absolute_url(base, path)
 	return (base:match("^(.*)/") or base) .. "/" .. path
 end
 
+local function metadata(root, node)
+	local attrs = {}
+	for key, value in pairs(root.attrs) do
+		if key:match("^xmlns:") then
+			attrs[key] = value
+		end
+	end
+	local prefix = "mise"
+	while attrs["xmlns:" .. prefix] do
+		prefix = prefix .. "_"
+	end
+	attrs["xmlns:" .. prefix] = "http://schemas.android.com/repository/android/common/02"
+	local local_package = { name = "localPackage", attrs = { path = node.attrs.path }, children = {} }
+	local keep = {
+		["type-details"] = true,
+		revision = true,
+		["display-name"] = true,
+		["uses-license"] = true,
+		dependencies = true,
+	}
+	for _, child in ipairs(node.children) do
+		if keep[child.name] then
+			local_package.children[#local_package.children + 1] = child
+		end
+	end
+	local children, license = {}, nil
+	local reference = xml.child(node, "uses-license")
+	if reference then
+		local id = common.package(reference.attrs.ref or "")
+		if id:find("/", 1, true) then
+			error("Invalid Android license name")
+		end
+		for _, child in ipairs(root.children) do
+			if child.name == "license" and child.attrs.id == id then
+				children[#children + 1] = child
+				license = { id = id, text = child.text }
+				break
+			end
+		end
+		if not license then
+			license = { id = id }
+		end
+	end
+	children[#children + 1] = local_package
+	return '<?xml version="1.0" encoding="UTF-8"?>\n' .. xml.serialize({
+		qualified = prefix .. ":repository",
+		attrs = attrs,
+		children = children,
+	}) .. "\n",
+		license
+end
+
 local function versions(root, tool, channel, system, architecture, url, options)
 	common.tool(tool)
 	if root.name ~= "sdk-repository" and root.name ~= "sdk-sys-img" then
@@ -147,15 +202,19 @@ local function versions(root, tool, channel, system, architecture, url, options)
 						local download = archive(xml.child(node, "archives"), system, architecture, path)
 						if download then
 							local checksum = xml.child(download, "checksum")
+							local package_xml, license = metadata(root, node)
 							local package = {
 								package = path,
 								revision = actual,
 								version = selected,
 								dependencies = M.dependencies(node),
+								metadata = package_xml,
+								license = license,
 								download = {
 									url = absolute_url(url, xml.text(download, "url")),
 									checksum_type = checksum and (checksum.attrs.type or "sha1") or "",
 									checksum = checksum and common.trim(checksum.text) or "",
+									size = tonumber(xml.text(download, "size")),
 								},
 							}
 							local previous = result[selected]

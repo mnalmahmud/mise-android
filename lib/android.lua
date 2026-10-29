@@ -1,10 +1,8 @@
 local common = require("common")
 local catalog = require("catalog")
-local file = require("file")
 local json = require("json")
 local M = {}
 local sdk = require("sdk")
-local cli_base = "https://dl.google.com/android/cli/latest/"
 
 local function request(ctx, installed)
 	if RUNTIME.osType ~= "linux" and RUNTIME.osType ~= "darwin" then
@@ -19,72 +17,6 @@ local function request(ctx, installed)
 		common.revision(ctx.version)
 	end
 	return tool, options
-end
-
-function M.platform(system, arch)
-	local os_name = ({ linux = "linux", darwin = "darwin" })[system]
-	local cpu = ({ amd64 = "x86_64", x86_64 = "x86_64", arm64 = "arm64", aarch64 = "arm64" })[arch]
-	if not os_name or not cpu then
-		error("No Android CLI download for " .. tostring(system) .. "/" .. tostring(arch))
-	end
-	return os_name .. "_" .. cpu
-end
-
-function M.checksum(text)
-	local digest, rest = text:match("^%s*(%x+)(.-)%s*$")
-	rest = rest and common.trim(rest)
-	if
-		not digest
-		or #digest ~= 64
-		or (rest ~= "" and rest ~= "android" and rest ~= "*android" and rest ~= "./android" and rest ~= "*./android")
-	then
-		error("Google returned an invalid Android CLI checksum")
-	end
-	return digest:lower()
-end
-
-function M.resolve_cli()
-	local candidate = common.trim(common.exec({ "sh", "-c", "command -v android || :" }))
-	if candidate ~= "" then
-		-- mise normally removes its shims from hook PATH. Skip recognizable leftovers.
-		local stat = file.stat(candidate)
-		if stat and not candidate:match("/mise/shims/") then
-			local resolved =
-				common.trim(common.exec({ "sh", "-c", 'if [ -L "$1" ]; then readlink "$1"; fi', "sh", candidate }))
-			if not resolved:match("/?mise$") then
-				return candidate
-			end
-		end
-	end
-	local platform = M.platform(RUNTIME.osType, RUNTIME.archType)
-	local url = cli_base .. platform .. "/android"
-	local expected = M.checksum(common.fetch(url .. ".sha256"))
-	local directory = assert(RUNTIME.cacheDirPath, "mise could not create its cache folder")
-		.. "/android/"
-		.. platform
-		.. "/"
-		.. expected
-	local executable = directory .. "/android"
-	local stat = file.stat(executable)
-	if stat and stat.is_file and common.sha256(executable) == expected then
-		common.exec({ "chmod", "755", executable })
-		return executable
-	end
-	local temporary = common.temp(directory)
-	local ok, message = pcall(function()
-		print("Downloading " .. url)
-		common.download(url, temporary, 67108864)
-		if common.sha256(temporary) ~= expected then
-			error("Android CLI checksum mismatch; download was not installed")
-		end
-		common.exec({ "chmod", "755", temporary })
-		file.move(temporary, executable)
-	end)
-	os.remove(temporary)
-	if not ok then
-		error(message)
-	end
-	return executable
 end
 
 function M.plan(tool, version, options)
@@ -138,41 +70,46 @@ local function project_packages(ctx, own, options)
 	return explicit
 end
 
-function M.preflight(explicit, installed, options)
-	local seen = {}
-	local function check(package, options)
-		local identity = package.package .. "@" .. package.revision
-		if seen[identity] then
-			return
-		end
-		seen[identity] = true
-		for _, dependency in ipairs(package.dependencies or {}) do
-			local requested = explicit[dependency.package]
-			local candidate = requested and requested.package or sdk.installed(dependency.package)
-			if not requested and (not candidate or common.less(candidate.revision, dependency.revision)) then
-				candidate = M.plan(dependency.package, "latest", options)
-			end
-			if common.less(candidate.revision, dependency.revision) then
-				error(
-					package.package
-						.. " requires "
-						.. dependency.package
-						.. " >= "
-						.. dependency.revision
-						.. "; the requested version is "
-						.. candidate.revision
-				)
-			end
-			check(candidate, requested and requested.options or options)
-		end
-	end
-	for _, name in ipairs(common.keys(explicit)) do
-		local entry = explicit[name]
-		check(entry.package, entry.options)
-	end
+function M.preflight(explicit, installed, options, roots)
+	local resolved, settings = {}, {}
 	for _, package in ipairs(installed or {}) do
-		check(package, options)
+		resolved[package.package], settings[package.package] = package, options
 	end
+	for name, entry in pairs(roots or explicit) do
+		resolved[name], settings[name] = entry.package, entry.options
+	end
+	local changed = true
+	while changed do
+		changed = false
+		for _, name in ipairs(common.keys(resolved)) do
+			local package = resolved[name]
+			for _, dependency in ipairs(package.dependencies or {}) do
+				local requested = explicit[dependency.package]
+				local candidate = requested and requested.package or resolved[dependency.package]
+				if not requested and (not candidate or common.less(candidate.revision, dependency.revision)) then
+					candidate = M.plan(dependency.package, "latest", settings[name])
+				end
+				if common.less(candidate.revision, dependency.revision) then
+					error(
+						package.package
+							.. " requires "
+							.. dependency.package
+							.. " >= "
+							.. dependency.revision
+							.. "; the requested version is "
+							.. candidate.revision
+					)
+				end
+				local previous = resolved[dependency.package]
+				if not previous or previous.revision ~= candidate.revision then
+					resolved[dependency.package] = candidate
+					settings[dependency.package] = requested and requested.options or settings[name]
+					changed = true
+				end
+			end
+		end
+	end
+	return resolved
 end
 
 function M.versions(ctx)
@@ -188,31 +125,14 @@ function M.install(ctx)
 	local package = M.plan(tool, common.revision(ctx.version), options)
 	local project = project_packages(ctx, package, options)
 	M.preflight(project, sdk.packages(project), options)
-	local executable = M.resolve_cli()
-	common.mkdir(sdk.root())
-	local arguments = {
-		executable,
-		"--sdk",
-		sdk.root(),
-		"sdk",
-		"install",
-		"--force",
-		package.package .. "@" .. common.cli_revision(package.revision),
-	}
-	if options.channel ~= "stable" then
-		arguments[#arguments + 1] = "--" .. options.channel
-	end
-	print("download / install SDK packages")
-	local ok, message = pcall(common.exec, arguments, options.timeout)
-	sdk.changed()
-	if not ok then
-		error(message)
-	end
-	print("verify SDK packages")
-	local actual = sdk.verify(package)
-	sdk.verify_dependencies(package)
-	sdk.verify_dependencies(actual)
-	sdk.save(ctx, options, package)
+	local lock = require("lock")
+	lock.run(sdk.data_dir() .. "/android/install.lock", options.timeout, function()
+		local installed = sdk.packages({ [package.package] = true })
+		M.preflight(project, sdk.packages(project), options)
+		local resolved = M.preflight(project, installed, options, { [package.package] = project[package.package] })
+		require("installer").install(resolved, options.timeout)
+		sdk.save(ctx, options, package)
+	end)
 	return {}
 end
 
@@ -222,28 +142,13 @@ function M.environment(ctx)
 end
 
 function M.uninstall(ctx)
-	request(ctx, true)
-	local record = sdk.record(ctx)
-	if not record then
-		return
-	end
-	local actual = sdk.installed(record.package.package)
-	-- An old mise receipt must not remove a newer shared package.
-	if not actual or actual.revision ~= record.package.revision then
-		return
-	end
-	local ok, message = pcall(common.exec, {
-		M.resolve_cli(),
-		"--sdk",
-		sdk.root(),
-		"sdk",
-		"remove",
-		record.package.package,
-	}, common.options(ctx.options, ctx.tool).timeout)
-	sdk.changed()
-	if not ok then
-		error(message)
-	end
+	local _, options = request(ctx, true)
+	require("lock").run(sdk.data_dir() .. "/android/install.lock", options.timeout, function()
+		local record = sdk.record(ctx)
+		if record then
+			require("installer").remove(record.package)
+		end
+	end)
 end
 
 return M

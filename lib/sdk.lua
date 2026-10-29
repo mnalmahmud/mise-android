@@ -27,9 +27,8 @@ function M.changed()
 	common.exec({ "touch", M.data_dir() })
 end
 
-function M.installed(path)
+function M.read(directory, path)
 	common.package(path)
-	local directory = M.root() .. "/" .. path
 	if not file.exists(directory .. "/source.properties") then
 		return nil
 	end
@@ -37,7 +36,8 @@ function M.installed(path)
 	for line in common.read(directory .. "/source.properties"):gmatch("[^\r\n]+") do
 		local value = line:match("^%s*Pkg%.Revision%s*=%s*(.-)%s*$")
 		if value then
-			revision = common.revision(value)
+			-- Repository XML represents previews by ordinal, including NDK beta builds.
+			revision = common.revision(value):gsub("%-%a+%.", "-rc.")
 		end
 	end
 	if not revision then
@@ -53,6 +53,10 @@ function M.installed(path)
 		dependencies = catalog.dependencies(node)
 	end
 	return { package = path, revision = revision, dependencies = dependencies }
+end
+
+function M.installed(path)
+	return M.read(M.root() .. "/" .. common.package(path), path)
 end
 
 function M.packages(excluded)
@@ -102,7 +106,7 @@ function M.save(ctx, options, package)
 		channel = options.channel,
 		variant = options.variant,
 		arch = options.arch,
-		package = package,
+		package = { package = package.package, revision = package.revision, dependencies = package.dependencies },
 	}) .. "\n")
 end
 

@@ -82,22 +82,6 @@ function M.revision(value)
 	return result
 end
 
-function M.cli_revision(value)
-	local base, preview = value:match("^(.-)%-rc%.(%d+)$")
-	if not preview then
-		return value
-	end
-	-- Google's CLI accepts previews as MAJOR.MINOR.MICRO.PREVIEW.
-	local parts = {}
-	for part in base:gmatch("%d+") do
-		parts[#parts + 1] = part
-	end
-	while #parts < 3 do
-		parts[#parts + 1] = "0"
-	end
-	return table.concat(parts, ".") .. "." .. preview
-end
-
 function M.less(left, right)
 	local function parts(value)
 		local normalized = M.revision(value)
@@ -223,6 +207,15 @@ function M.temp(directory)
 	return M.trim(M.exec({ "mktemp", directory .. "/.mise-android.XXXXXXXX" }))
 end
 
+function M.temp_dir(directory)
+	M.mkdir(directory)
+	return M.trim(M.exec({ "mktemp", "-d", directory .. "/.mise-android.XXXXXXXX" }))
+end
+
+function M.remove(path)
+	M.exec({ "rm", "-rf", "--", path })
+end
+
 function M.read(path)
 	return require("file").read(path)
 end
@@ -240,7 +233,7 @@ function M.atomic(path, content)
 		local closed, close_reason = stream:close()
 		assert(written, reason)
 		assert(closed, close_reason)
-		require("file").move(temporary, path)
+		assert(os.rename(temporary, path))
 	end)
 	os.remove(temporary)
 	if not ok then
@@ -250,26 +243,28 @@ end
 
 function M.download(url, destination, maximum, timeout)
 	M.url(url)
-	local ok, message = pcall(M.exec, {
-		"curl",
-		"--fail",
-		"--silent",
-		"--show-error",
-		"--location",
-		"--proto",
-		"=https",
-		"--proto-redir",
-		"=https",
-		"--connect-timeout",
-		"30",
-		"--max-time",
-		tostring(timeout or 120),
-		"--max-filesize",
-		tostring(maximum or 16777216),
-		"--output",
-		destination,
-		url,
-	}, (timeout or 120) + 5)
+	local arguments = M.local_path(url) and { "cp", M.local_path(url), destination }
+		or {
+			"curl",
+			"--fail",
+			"--silent",
+			"--show-error",
+			"--location",
+			"--proto",
+			"=https",
+			"--proto-redir",
+			"=https",
+			"--connect-timeout",
+			"30",
+			"--max-time",
+			tostring(timeout or 120),
+			"--max-filesize",
+			tostring(maximum or 16777216),
+			"--output",
+			destination,
+			url,
+		}
+	local ok, message = pcall(M.exec, arguments, (timeout or 120) + 5)
 	if not ok then
 		os.remove(destination)
 		error("Download failed: " .. tostring(message))
@@ -281,13 +276,20 @@ function M.download(url, destination, maximum, timeout)
 	end
 end
 
-function M.fetch(url)
+function M.local_path(url)
 	M.url(url)
 	if url:match("^file://") then
 		local path = url:gsub("^file://localhost", ""):gsub("^file://", "")
-		path = path:gsub("%%(%x%x)", function(hex)
+		return (path:gsub("%%(%x%x)", function(hex)
 			return string.char(tonumber(hex, 16))
-		end)
+		end))
+	end
+end
+
+function M.fetch(url)
+	M.url(url)
+	local path = M.local_path(url)
+	if path then
 		local stat = require("file").stat(path)
 		if not stat or not stat.is_file or stat.size > 16777216 then
 			error("Local package list is missing or exceeds 16 MiB: " .. path)
@@ -306,10 +308,15 @@ function M.fetch(url)
 	return result
 end
 
-function M.sha256(path)
-	local args = RUNTIME.osType == "darwin" and { "shasum", "-a", "256", path } or { "sha256sum", path }
+function M.digest(path, algorithm)
+	local bits = ({ sha1 = "1", sha256 = "256", sha512 = "512" })[algorithm]
+	if not bits then
+		error("Unsupported checksum algorithm: " .. tostring(algorithm))
+	end
+	local args = RUNTIME.osType == "darwin" and { "shasum", "-a", bits, path } or { algorithm .. "sum", path }
 	local digest = M.exec(args):match("^(%x+)")
-	if not digest or #digest ~= 64 then
+	local length = ({ sha1 = 40, sha256 = 64, sha512 = 128 })[algorithm]
+	if not digest or #digest ~= length then
 		error("Could not check the download: " .. path)
 	end
 	return digest:lower()

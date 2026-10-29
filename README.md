@@ -6,7 +6,8 @@ Install Android SDK packages with [mise](https://mise.jdx.dev/).
 
 Requires mise 2026.10.19 or newer and Linux or macOS on x64 or ARM64.
 The plugin runs using Lua included with mise. Downloads use `curl`, with
-`sha256sum` on Linux or `shasum` on macOS to check Google's Android command.
+`sha1sum`, `sha256sum`, or `sha512sum` on Linux and `shasum` on macOS for checksums.
+Extraction uses `unzip`, preserving executable permissions and NDK symbolic links.
 
 ```sh
 mise plugins install vfox-backend:android https://github.com/mnalmahmud/mise-android
@@ -28,8 +29,8 @@ minimum_release_age_excludes = ["android:*"]
 ```
 
 Run `mise install`. `android:sdk` installs the platform for the selected API level;
-`platform-tools` provides `adb` and `fastboot`. Google installs each package's
-required dependencies too.
+`platform-tools` provides `adb` and `fastboot`. The plugin also installs the
+dependencies required by Google's package metadata.
 
 Google's package lists omit release dates. The Android exclusion skips its
 release-age check while keeping the checks for other tools.
@@ -61,6 +62,8 @@ version, run, for example:
 mise install --force android:emulator
 ```
 
+mise's `--force` removes the selected package before reinstalling it.
+
 Switching projects reads package information and sets paths. Installations and
 removals update the shared SDK.
 
@@ -88,8 +91,9 @@ Each package has its own tool entry:
 Use a specific version or `latest`. `latest` is resolved when installing. To
 refresh an installed package, run `mise install --force android:TOOL`.
 
-The selected NDK sets `ANDROID_NDK_HOME`. Google's Linux NDK builds require an x64
-host; the macOS NDK supports x64 and ARM64.
+The selected NDK sets `ANDROID_NDK_HOME`. Google's native Linux tool packages
+require x64. Platform packages can also be managed on Linux ARM64. The macOS NDK
+supports x64 and ARM64.
 
 List available versions:
 
@@ -103,8 +107,8 @@ full version shown in the list.
 ## System images
 
 `"android:system-image" = "36"` selects the `google_apis` image for Android 36 and
-your machine's CPU. `google_apis` includes Google Play services. Google installs
-the emulator when the image requires it.
+your machine's CPU. `google_apis` includes Google Play services. The emulator is
+installed when the image requires it.
 
 To choose the image variant or CPU explicitly:
 
@@ -132,8 +136,8 @@ mise uninstall android:sdk@36
 mise uninstall android:ndk@30.0.16248370
 ```
 
-Removal asks Google's command to remove the selected package from the SDK. Other
-packages stay in the shared folder. Removing an old mise entry for an emulator or
+Removal deletes the selected package from the SDK. Other packages stay in the
+shared folder. Removing an old mise entry for an emulator or
 platform-tools version preserves a different version currently installed there.
 
 ## Settings
@@ -143,17 +147,24 @@ platform-tools version preserves a different version currently installed there.
 | `channel` | `"stable"` | `stable`, `beta`, or `canary` releases |
 | `variant` | `"google_apis"` | Image variant for `android:system-image` |
 | `arch` | Host CPU | Image architecture for `android:system-image` |
-| `timeout` | `1800` | Installer time limit in seconds, from 1 to 86400 |
+| `timeout` | `1800` | Time limit for each download, extraction, or waiting for another installation, from 1 to 86400 seconds |
 | `repository_url` | Google's package list | Package metadata from HTTPS or an absolute local `file://` address |
 
-The plugin uses Google's `android` command from your command search path, or
-downloads a checksum-verified copy into mise's cache. Google handles package
-archives and licenses. `repository_url` controls discovery and dependency checks;
-Google's command controls package download locations.
+The plugin downloads package archives directly from the URLs in Google's XML
+lists and verifies their published checksums before extraction. Packages are
+prepared in temporary folders before replacing installed files. A failed
+replacement restores the previous package.
 
-`mise cache clear android` clears cached version lists and downloaded copies of
-the Android command. The SDK stays in mise's data folder. Google's command may
-also save files in your Android user folder.
+Installing a package accepts its included Android SDK license. The license text
+is kept in `package.xml`, with acceptance records under the SDK's `licenses/`
+folder. These files use Android's SDK formats.
+
+`repository_url` supplies package URLs, checksums, dependencies, and licenses.
+The default uses Google's HTTPS package lists. Local `file://` package lists and
+archives can be used for offline installations.
+
+`mise cache clear` clears mise's cache, including downloaded SDK archives.
+The installed SDK stays in mise's data folder.
 
 ## Development
 

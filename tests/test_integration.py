@@ -1,4 +1,4 @@
-"""Exercise a real mise binary with an offline Android CLI and repository sample."""
+"""Exercise a real mise binary with local Android package lists and ZIP archives."""
 
 import hashlib
 import importlib.util
@@ -7,9 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -34,15 +32,14 @@ class MiseIntegrationTests(unittest.TestCase):
                 ".git", ".venv", ".ruff_cache", "__pycache__", ".agents", ".aws", ".codex"
             ),
         )
-        sample_path = self.plugin / "tests/data/fake_android.py"
-        android = self.bin / "android"
-        android.write_text(f"#!{sys.executable}\n" + sample_path.read_text())
-        android.chmod(0o755)
-        spec = importlib.util.spec_from_file_location("sample_android", sample_path)
-        sample = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sample)
+        sample_path = self.plugin / "tests/data/packages.py"
+        spec = importlib.util.spec_from_file_location("sample_packages", sample_path)
+        self.sample = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.sample)
+        self.archives = self.root / "package archives"
+        self.sample.create_archives(self.archives)
         self.repository = self.root / "repository.xml"
-        self.repository.write_bytes(sample.repository_xml())
+        self.refresh_metadata()
         self.environment = {
             "HOME": str(self.root / "home"),
             "PATH": str(self.bin) + os.pathsep + os.defpath,
@@ -57,7 +54,6 @@ class MiseIntegrationTests(unittest.TestCase):
             "MISE_TRUSTED_CONFIG_PATHS": str(self.root),
             "MISE_YES": "1",
             "MISE_BIN": str(Path(MISE).resolve()),
-            "FAKE_ANDROID_LOG": str(self.root / "calls.jsonl"),
         }
         Path(self.environment["HOME"]).mkdir()
         self.write_config()
@@ -87,8 +83,22 @@ class MiseIntegrationTests(unittest.TestCase):
         return self.root / "data/android/sdk"
 
     def calls(self):
-        path = self.root / "calls.jsonl"
-        return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        return list((self.root / "cache").rglob("package.zip"))
+
+    def refresh_metadata(self):
+        self.repository.write_bytes(self.sample.repository_xml(self.archives))
+
+    def archive(self, package, revision):
+        return self.sample.archive_path(self.archives, package, revision)
+
+    def replace_archive(self, package, revision, files):
+        import zipfile
+
+        path = self.archive(package, revision)
+        with zipfile.ZipFile(path, "w") as archive:
+            for name, content in files.items():
+                archive.writestr(name, content)
+        self.refresh_metadata()
 
     def mise(self, *arguments, check=True):
         result = subprocess.run(
@@ -107,29 +117,6 @@ class MiseIntegrationTests(unittest.TestCase):
     def environment_values(self):
         return json.loads(self.mise("env", "--json").stdout)
 
-    def fake_cli_downloads(self):
-        source = self.root / "downloadable android"
-        source.write_bytes((self.bin / "android").read_bytes())
-        (self.bin / "android").unlink()
-        digest = hashlib.sha256(source.read_bytes()).hexdigest()
-        curl = self.bin / "curl"
-        curl.write_text(
-            f"#!{sys.executable}\n"
-            "import json,os,sys\nfrom pathlib import Path\n"
-            "url=sys.argv[-1]\n"
-            "assert url.startswith('https://dl.google.com/android/cli/latest/'), url\n"
-            f"source=Path({str(source)!r})\n"
-            "if url.endswith('/android.sha256'):\n"
-            f"    content=(os.environ.get('FAKE_CLI_DIGEST') or {digest!r}).encode()\n"
-            "else:\n"
-            "    assert url.endswith('/android'), url\n"
-            "    content=source.read_bytes()\n"
-            "Path(sys.argv[sys.argv.index('--output')+1]).write_bytes(content)\n"
-            f"with open({str(self.root / 'downloads.jsonl')!r},'a') as log:\n"
-            "    log.write(json.dumps(url)+'\\n')\n"
-        )
-        curl.chmod(0o755)
-
     def test_components_install_into_one_sdk_and_export_selected_ndk(self):
         self.mise("install")
         values = self.environment_values()
@@ -137,7 +124,6 @@ class MiseIntegrationTests(unittest.TestCase):
         self.assertEqual(Path(values["ANDROID_NDK_HOME"]), self.sdk / "ndk/30.0.1")
         self.assertTrue((self.sdk / "platforms/android-36/source.properties").exists())
         self.assertIn("platform-tools@37.0.1", self.mise("exec", "--", "adb", "version").stdout)
-        self.assertEqual({Path(call[1]) for call in self.calls()}, {self.sdk})
 
     def test_multiple_platforms_and_ndks_coexist(self):
         self.write_config({"sdk": ["36", "37"], "ndk": ["29.0.1", "30.0.1"]})
@@ -260,9 +246,9 @@ class MiseIntegrationTests(unittest.TestCase):
         self.mise("install")
         self.environment_values()
         before = {p: p.stat().st_mtime_ns for p in self.sdk.rglob("*")}
-        (self.bin / "android").unlink()
         self.repository.unlink()
-        self.mise("cache", "clear", "android")
+        self.mise("cache", "clear")
+        self.assertEqual(self.calls(), [])
         self.assertEqual(Path(self.environment_values()["ANDROID_HOME"]), self.sdk)
         self.assertEqual(before, {p: p.stat().st_mtime_ns for p in self.sdk.rglob("*")})
 
@@ -316,14 +302,13 @@ class MiseIntegrationTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(self.calls(), [])
 
-    def test_preview_revision_uses_numeric_cli_argument(self):
+    def test_preview_revision_is_installed_without_cli_version_translation(self):
         self.write_config({"ndk": {"version": "31.0.1-rc.2", "channel": "canary"}})
         self.mise("install")
-        self.assertIn("ndk/31.0.1@31.0.1.2", self.calls()[0])
-        self.assertIn("--canary", self.calls()[0])
         self.assertEqual(
             Path(self.environment_values()["ANDROID_NDK_HOME"]), self.sdk / "ndk/31.0.1"
         )
+        self.assertIn("31.0.1-beta2", (self.sdk / "ndk/31.0.1/source.properties").read_text())
 
     def test_linux_arm64_ndk_fails_before_installer_but_platform_works(self):
         for hook in ["backend_list_versions.lua", "backend_install.lua"]:
@@ -342,65 +327,163 @@ class MiseIntegrationTests(unittest.TestCase):
         self.mise("install")
         self.assertEqual(Path(self.environment_values()["ANDROID_HOME"]), self.sdk)
 
-    def test_cli_download_is_checked_reused_and_repaired(self):
-        self.fake_cli_downloads()
+    def test_archive_cache_is_verified_reused_and_repaired(self):
         self.write_config({"sdk": "36"})
         self.mise("install")
-        calls = self.root / "downloads.jsonl"
-        self.assertEqual(len(calls.read_text().splitlines()), 2)
-        self.write_config({"sdk": "37"})
-        self.mise("install")
-        self.assertEqual(len(calls.read_text().splitlines()), 3)
-        executable = next(p for p in (self.root / "cache").rglob("android") if p.is_file())
-        executable.write_bytes(b"corrupt")
-        self.write_config({"platform-tools": "37.0.1"})
-        self.mise("install")
-        self.assertEqual(len(calls.read_text().splitlines()), 5)
-        self.assertNotEqual(executable.read_bytes(), b"corrupt")
+        cached = self.calls()[0]
+        correct = cached.read_bytes()
+        self.mise("install", "--force", "android:sdk")
+        self.assertEqual(cached.read_bytes(), correct)
+        cached.write_bytes(b"corrupt")
+        self.mise("install", "--force", "android:sdk")
+        self.assertEqual(cached.read_bytes(), correct)
 
-    def test_bad_cli_checksum_does_not_install_download(self):
-        self.fake_cli_downloads()
-        self.environment["FAKE_CLI_DIGEST"] = "0" * 64
+    def test_bad_checksum_is_rejected_before_sdk_changes(self):
+        self.write_config({"sdk": "36"})
+        import xml.etree.ElementTree as ET
+
+        root = ET.fromstring(self.repository.read_bytes())
+        for node in root.findall("remotePackage"):
+            if node.attrib["path"] == "platforms;android-36":
+                node.find("archives/archive/complete/checksum").text = "0" * 40
+        self.repository.write_bytes(ET.tostring(root))
+        result = self.mise("install", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("checksum or size mismatch", result.stderr)
+        self.assertFalse((self.sdk / "platforms/android-36").exists())
+        self.assertFalse(list((self.root / "data/installs").rglob(".mise-android-package.json")))
+
+    def test_failed_upgrade_preserves_old_shared_version(self):
+        self.write_config({"emulator": "35.0.0"})
+        self.mise("install")
+        self.replace_archive(
+            "emulator", "37.0.0", {"content/source.properties": "Pkg.Revision=999\n"}
+        )
+        self.write_config({"emulator": "37.0.0"})
+        result = self.mise("install", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Expected emulator@37.0.0", result.stderr)
+        self.assertEqual(
+            (self.sdk / "emulator/source.properties").read_text(), "Pkg.Revision=35.0.0\n"
+        )
+        self.assertFalse(list((self.root / "data/android").glob(".mise-android.*")))
+
+    def test_publish_failure_restores_old_package(self):
+        self.write_config({"emulator": "35.0.0"})
+        self.mise("install")
+        hook = self.plugin / "hooks/backend_install.lua"
+        hook.write_text(
+            "function PLUGIN:BackendInstall(ctx)\nlocal rename=os.rename\nos.rename=function(source,target)\n"
+            'if source:match("/content$") and target:match("/sdk/emulator$") then return nil,"simulated publish failure" end\n'
+            'return rename(source,target)\nend\nreturn require("android").install(ctx) end\n'
+        )
+        self.write_config({"emulator": "37.0.0"})
+        result = self.mise("install", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("simulated publish failure", result.stderr)
+        self.assertEqual(
+            (self.sdk / "emulator/source.properties").read_text(), "Pkg.Revision=35.0.0\n"
+        )
+
+    def test_missing_source_properties_fails_before_publication(self):
+        self.replace_archive("platforms/android-36", "3", {"content/README": "empty package"})
         self.write_config({"sdk": "36"})
         result = self.mise("install", check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("checksum mismatch", result.stderr)
-        self.assertFalse(any(p.is_file() for p in (self.root / "cache").rglob("android")))
+        self.assertIn("missing Android source.properties", result.stderr)
+        self.assertFalse((self.sdk / "platforms/android-36").exists())
 
-    def test_wrong_installed_version_or_identity_is_not_recorded(self):
-        for variable, message in [
-            ("FAKE_ANDROID_WRONG_REVISION", "Expected"),
-            ("FAKE_ANDROID_WRONG_IDENTITY", "wrong name"),
-        ]:
-            self.write_config({"sdk": "36"})
-            self.environment[variable] = "1"
-            result = self.mise("install", check=False)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(message, result.stderr)
-            self.assertFalse(
-                list((self.root / "data/installs").rglob(".mise-android-package.json"))
-            )
-            del self.environment[variable]
-
-    def test_failure_preserves_other_installed_components(self):
+    def test_embedded_package_identity_is_checked_before_writing_metadata(self):
+        self.replace_archive(
+            "platforms/android-36",
+            "3",
+            {
+                "content/source.properties": "Pkg.Revision=3\n",
+                "content/package.xml": '<repository><localPackage path="wrong-package"/></repository>',
+            },
+        )
         self.write_config({"sdk": "36"})
-        self.mise("install")
-        self.write_config({"sdk": "36", "ndk": "30.0.1"})
-        self.environment["FAKE_ANDROID_FAIL_PACKAGE"] = "ndk/30.0.1"
         result = self.mise("install", check=False)
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("wrong name", result.stderr)
+        self.assertFalse((self.sdk / "platforms/android-36").exists())
+
+    def test_package_metadata_and_license_records_are_written(self):
+        import xml.etree.ElementTree as ET
+
+        self.write_config({"system-image": "36"})
+        self.mise("install")
+        path = next((self.sdk / "system-images").rglob("package.xml"))
+        root = ET.parse(path).getroot()
+        self.assertEqual(
+            root.tag, "{http://schemas.android.com/repository/android/common/02}repository"
+        )
+        package = root.find("localPackage")
+        self.assertTrue(package.attrib["path"].startswith("system-images;android-36;google_apis;"))
+        self.assertEqual(package.find("dependencies/dependency").attrib["path"], "emulator")
+        expected = hashlib.sha1(self.sample.LICENSE.encode()).hexdigest()
+        self.assertIn(expected, (self.sdk / "licenses/test-license").read_text().splitlines())
+
+    def test_stale_installation_lock_is_recovered(self):
+        lock = self.root / "data/android/install.lock"
+        lock.mkdir(parents=True)
+        (lock / "999999999-old-process").write_text("old start time")
+        self.write_config({"sdk": {"version": "36", "timeout": 5}})
+        self.mise("install")
+        self.assertFalse(lock.exists())
         self.assertTrue((self.sdk / "platforms/android-36").is_dir())
 
-    def test_python_and_bash_are_not_needed_by_plugin(self):
+    def test_live_installation_lock_is_preserved_on_timeout(self):
+        lock = self.root / "data/android/install.lock"
+        lock.mkdir(parents=True)
+        pid = str(os.getpid())
+        started = subprocess.check_output(
+            ["env", "LC_ALL=C", "ps", "-p", pid, "-o", "lstart="], text=True
+        ).strip()
+        owner = lock / (pid + "-active-test")
+        owner.write_text(started)
+        self.write_config({"sdk": {"version": "36", "timeout": 1}})
+        result = self.mise("install", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Timed out waiting", result.stderr)
+        self.assertTrue(owner.exists())
+        self.assertEqual(self.calls(), [])
+
+    def test_flat_archive_layout_is_supported(self):
+        self.replace_archive("platforms/android-36", "3", {"source.properties": "Pkg.Revision=3\n"})
+        self.write_config({"sdk": "36"})
+        self.mise("install")
+        self.assertTrue((self.sdk / "platforms/android-36/package.xml").is_file())
+
+    def test_android_java_python_and_bash_are_not_used(self):
         marker = self.root / "unexpected-command"
-        for name in ["python", "python3", "bash"]:
+        for name in ["android", "java", "python", "python3", "bash", "tar"]:
             path = self.bin / name
             path.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 99\n')
             path.chmod(0o755)
-        self.write_config({"sdk": "36"})
+        self.write_config({"sdk": "36", "system-image": "36", "ndk": "30.0.1"})
         self.mise("install")
         self.environment_values()
         self.assertFalse(marker.exists())
+
+    def test_ndk_symbolic_links_and_executable_permissions_are_preserved(self):
+        import zipfile
+
+        with zipfile.ZipFile(self.archive("ndk/30.0.1", "30.0.1"), "a") as archive:
+            binary = zipfile.ZipInfo("content/bin/clang-real")
+            binary.external_attr = 0o100755 << 16
+            archive.writestr(binary, "binary")
+            link = zipfile.ZipInfo("content/bin/clang")
+            link.create_system = 3
+            link.external_attr = 0o120777 << 16
+            archive.writestr(link, "clang-real")
+        self.refresh_metadata()
+        self.write_config({"ndk": "30.0.1"})
+        self.mise("install")
+        link = self.sdk / "ndk/30.0.1/bin/clang"
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(link.readlink(), Path("clang-real"))
+        self.assertTrue(link.stat().st_mode & 0o111)
 
     def test_lua_modules_in_mises_interpreter(self):
         self.environment["MISE_ANDROID_TEST_ROOT"] = str(self.plugin)
@@ -409,32 +492,25 @@ class MiseIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(self.mise("ls-remote", "android:test").stdout.strip(), "1")
 
-    def test_timeout_stops_installer_after_launcher_exec(self):
-        launcher_pid, installer_pid = self.root / "launcher.pid", self.root / "installer.pid"
-        worker = (
-            "import os,time\n"
-            + f"open({str(installer_pid)!r},'w').write(str(os.getpid()))\ntime.sleep(60)\n"
-        )
-        (self.bin / "android").write_text(
-            f"#!{sys.executable}\nimport os,sys\n"
-            + f"open({str(launcher_pid)!r},'w').write(str(os.getpid()))\n"
-            + f"os.execv(sys.executable,[sys.executable,'-c',{worker!r}])\n"
-        )
-        self.write_config({"sdk": {"version": "36", "timeout": 1}})
+    def test_download_timeout_releases_lock_and_preserves_sdk(self):
+        import xml.etree.ElementTree as ET
+
+        self.write_config({"sdk": "36"})
+        self.mise("install")
+        root = ET.fromstring(self.repository.read_bytes())
+        for node in root.findall("remotePackage"):
+            if node.attrib["path"] == "platform-tools":
+                node.find("archives/archive/complete/url").text = "https://example.invalid/slow.zip"
+        self.repository.write_bytes(ET.tostring(root))
+        curl = self.bin / "curl"
+        curl.write_text("#!/bin/sh\nexec sleep 60\n")
+        curl.chmod(0o755)
+        self.write_config({"platform-tools": {"version": "37.0.1", "timeout": 1}})
         result = self.mise("install", check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("timed out", result.stderr.lower())
-        pid = int(installer_pid.read_text())
-        self.assertEqual(pid, int(launcher_pid.read_text()))
-        deadline = time.monotonic() + 2
-        while True:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-            if time.monotonic() >= deadline:
-                self.fail("Installer survived timeout")
-            time.sleep(0.01)
+        self.assertFalse((self.root / "data/android/install.lock").exists())
+        self.assertTrue((self.sdk / "platforms/android-36").is_dir())
 
 
 if __name__ == "__main__":
