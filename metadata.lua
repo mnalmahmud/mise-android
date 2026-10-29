@@ -1,7 +1,7 @@
 PLUGIN = {
-    name = "android",
-    version = "0.1.0",
-    description = "Android SDK packages managed by mise through Google's Android CLI",
-    license = "MIT",
-    depends = { "python" },
+	name = "android",
+	version = "0.1.0",
+	description = "Install and switch Android SDKs with mise.",
+	homepage = "https://github.com/mnalmahmud/mise-android",
+	license = "MIT",
 }

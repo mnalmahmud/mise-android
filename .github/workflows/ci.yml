@@ -46,3 +46,4 @@ jobs:
       - run: python3 -m unittest discover -s tests -v
         env:
           MISE_ANDROID_INTEGRATION: "1"
+      - run: mise exec stylua@2.5.2 -- stylua --check lib hooks metadata.lua tests/unit.lua

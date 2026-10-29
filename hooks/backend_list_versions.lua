@@ -1,3 +1,3 @@
 function PLUGIN:BackendListVersions(ctx)
-    return require("bridge").run("versions", ctx)
+	return require("android").versions(ctx)
 end

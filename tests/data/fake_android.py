@@ -56,9 +56,11 @@ def main():
             sys.exit("Simulated SDK download failure")
         component = sdk / package
         component.mkdir(parents=True)
-        (component / "source.properties").write_text(f"Pkg.Revision={revision}\n")
+        actual = "999" if os.environ.get("FAKE_ANDROID_WRONG_REVISION") else revision
+        (component / "source.properties").write_text(f"Pkg.Revision={actual}\n")
+        identity = "wrong-package" if os.environ.get("FAKE_ANDROID_WRONG_IDENTITY") else package
         (component / "package.xml").write_text(
-            f'<repository><localPackage path="{package.replace("/", ";")}"/></repository>'
+            f'<repository><localPackage path="{identity.replace("/", ";")}"/></repository>'
         )
         if package == "platform-tools":
             executable = component / "adb"

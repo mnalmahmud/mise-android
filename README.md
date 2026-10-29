@@ -8,13 +8,15 @@ on their own.
 ## What you need
 
 - mise 2026.10.19 or newer.
-- Python 3.10 or newer, available as `python3`.
 - Linux or macOS, on x64 or ARM64.
+
+Also needs `bash`, `curl`, and `sha256sum` on Linux or `shasum` on macOS. These are
+common system tools. You do not need Python or a separate Lua installation.
 
 If Google's `android` command is already installed, this plugin uses it. Otherwise,
 it downloads a copy and checks that the file matches what Google published.
-On Linux ARM64, you need to provide the `android` command yourself. Windows is not
-supported.
+Downloads are available for both x64 and ARM64 on Linux and macOS. Windows is not
+supported by this plugin yet.
 
 ## Install
 
@@ -32,7 +34,6 @@ experimental = true
 "vfox-backend:android" = "https://github.com/mnalmahmud/mise-android"
 
 [tools]
-"core:python" = "3.14"
 "android:sdk" = "36"
 ```
 
@@ -152,11 +153,10 @@ Google's `android` command downloads the SDK packages and handles their licenses
 This plugin checks the installed versions before marking an installation complete.
 It does not accept licenses for you or check SDK download files itself.
 
-Downloaded copies of the `android` command are kept under `$XDG_CACHE_HOME/mise-android`
-when that setting is an absolute path. Otherwise, they go in `~/.cache/mise-android`
-on Linux or `~/Library/Caches/mise-android` on macOS. Package lists are saved for an
-hour to avoid repeated downloads. Google's command may also save files in your
-Android user folder.
+Downloaded copies of the `android` command are saved in mise's cache folder and
+checked before reuse. `mise cache clear android` removes them. mise also saves
+version lists to avoid repeated downloads. Google's command may save additional
+files in your Android user folder.
 
 This plugin does not set up Android Studio, create virtual devices, or manage your
 app's dependencies. mise's lock file does not save SDK download checksums, and

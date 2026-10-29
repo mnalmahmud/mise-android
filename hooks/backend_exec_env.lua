@@ -1,3 +1,3 @@
 function PLUGIN:BackendExecEnv(ctx)
-    return require("bridge").run("env", ctx)
+	return require("android").environment(ctx)
 end

@@ -1,7 +1,8 @@
 # Contributing
 
 Keep changes small, the code easy to follow, and the README accurate.
-The plugin uses Python's standard library and the Lua tools included with mise.
+The plugin uses the Lua interpreter included with mise and a small Bash script.
+Python is used only to run the development tests.
 
 ## Run the checks
 
@@ -14,10 +15,12 @@ python3 -m venv .venv
 MISE_ANDROID_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/ruff check lib tests
 .venv/bin/ruff format --check lib tests
+mise exec stylua@2.5.2 -- stylua --check lib hooks metadata.lua tests/unit.lua
 ```
 
-The second test command also tests the plugin through mise. It needs `mise` on your
-command search path. Set `MISE_BIN` to use a different mise executable.
+The second test command runs the Lua checks and tests the plugin through mise.
+It needs `mise` on your command search path. Set `MISE_BIN` to use a different mise
+executable. You do not need a separate Lua installation.
 
 Tests use temporary folders and a small replacement for Google's `android` command.
 They must not download Android SDK packages, accept licenses, or change a real SDK.
@@ -28,15 +31,13 @@ both the oldest supported mise release and the current stable release.
 
 | File or folder | What it does |
 | --- | --- |
-| `hooks/` and `lib/bridge.lua` | Receive calls from mise and pass them to Python |
-| `lib/android_backend.py` | Read the request, run it, and return a result or error |
-| `lib/android_mise/model.py` | Check settings, names, and version numbers |
-| `lib/android_mise/catalog.py` | Read Google's package lists and find suitable versions |
-| `lib/android_mise/network.py` | Download files and save temporary copies of package lists |
-| `lib/android_mise/bootstrap.py` | Find or download Google's `android` command |
-| `lib/android_mise/android_cli.py` | Run that command and stop it if it takes too long |
-| `lib/android_mise/backend.py` | Decide what to install and what settings a project needs |
-| `lib/android_mise/storage.py` | Save installation records and check installed packages |
+| `hooks/` | Receive calls from mise |
+| `lib/android.lua` | Find the Android command, install packages, and set project paths |
+| `lib/common.lua` | Check settings, compare versions, download files, and save records |
+| `lib/catalog.lua` | Read Google's package lists and find suitable versions |
+| `lib/xml.lua` | Read the XML format used by Google's lists |
+| `lib/install.sh` | Run the installer and stop it and its children if it takes too long |
+| `tests/unit.lua` | Check the Lua code inside mise's own interpreter |
 | `tests/data/` | Sample package lists and the test `android` command |
 
 ## Keep these rules
@@ -46,6 +47,7 @@ both the oldest supported mise release and the current stable release.
 - Keep each SDK inside the folder mise provides for it.
 - Read files when switching SDKs; do not change them or contact Google.
 - Keep separately installed tools independent of SDKs.
+- Keep one format for installation records; this project has no older releases to support.
 - Leave the user's shell settings and existing SDKs alone.
 
 When changing package-list handling, test missing and invalid entries, previews,
@@ -69,6 +71,6 @@ just as the tests do.
 
 ## Report a problem
 
-Include your OS, Python and mise versions, the relevant `mise.toml` settings, the
+Include your OS and mise version, the relevant `mise.toml` settings, the
 command you ran, and its error output. Remove private values before sharing them.
 For a code change, explain what was wrong, what changed, and which checks passed.
