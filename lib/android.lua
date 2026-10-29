@@ -138,7 +138,7 @@ local function project_packages(ctx, own, options)
 	return explicit
 end
 
-function M.preflight(explicit)
+function M.preflight(explicit, installed, options)
 	local seen = {}
 	local function check(package, options)
 		local identity = package.package .. "@" .. package.revision
@@ -170,6 +170,9 @@ function M.preflight(explicit)
 		local entry = explicit[name]
 		check(entry.package, entry.options)
 	end
+	for _, package in ipairs(installed or {}) do
+		check(package, options)
+	end
 end
 
 function M.versions(ctx)
@@ -183,7 +186,8 @@ function M.install(ctx)
 	local tool, options = request(ctx, true)
 	print("resolve packages")
 	local package = M.plan(tool, common.revision(ctx.version), options)
-	M.preflight(project_packages(ctx, package, options))
+	local project = project_packages(ctx, package, options)
+	M.preflight(project, sdk.packages(project), options)
 	local executable = M.resolve_cli()
 	common.mkdir(sdk.root())
 	local arguments = {

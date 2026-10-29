@@ -228,8 +228,22 @@ class MiseIntegrationTests(unittest.TestCase):
         self.write_config({"emulator": "35.0.0"})
         result = self.mise("env", "--json", check=False)
         self.assertIn("Expected emulator@35.0.0, found 37.0.0", result.stderr)
+        self.mise("uninstall", "android:system-image@36")
         self.mise("install", "--force", "android:emulator")
         self.assertIn("emulator@35.0.0", self.mise("exec", "--", "emulator").stdout)
+
+    def test_installed_image_blocks_incompatible_emulator_pin_in_another_project(self):
+        self.write_config({"system-image": "36"})
+        self.mise("install")
+        before = len(self.calls())
+        self.write_config({"emulator": "35.0.0"})
+        result = self.mise("install", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires emulator >= 35.4.9", result.stderr)
+        self.assertEqual(len(self.calls()), before)
+        self.assertEqual(
+            (self.sdk / "emulator/source.properties").read_text(), "Pkg.Revision=37.0.0\n"
+        )
 
     def test_uninstalling_old_receipt_preserves_new_shared_version(self):
         self.write_config({"platform-tools": "36.0.0"})

@@ -55,6 +55,26 @@ function M.installed(path)
 	return { package = path, revision = revision, dependencies = dependencies }
 end
 
+function M.packages(excluded)
+	local result = {}
+	local function visit(directory, path, depth)
+		if path ~= "" and file.exists(directory .. "/source.properties") then
+			if not excluded[path] then
+				result[#result + 1] = M.installed(path)
+			end
+		elseif depth < 4 and common.is_dir(directory) then
+			for _, child in ipairs(file.list(directory)) do
+				local name = child:match("([^/]+)$")
+				if name:match("^[%w_][%w_.+%-]*$") and name ~= "licenses" and common.is_dir(child) then
+					visit(child, path == "" and name or path .. "/" .. name, depth + 1)
+				end
+			end
+		end
+	end
+	visit(M.root(), "", 0)
+	return result
+end
+
 function M.verify(package, minimum)
 	local actual = M.installed(package.package)
 	if

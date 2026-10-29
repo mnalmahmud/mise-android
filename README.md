@@ -119,6 +119,7 @@ the API level, variant, and architecture.
 An explicit emulator version must meet the image's minimum requirement. The plugin
 checks the project's package requests before starting the installer. An image can
 upgrade an older emulator when the project leaves its version unspecified.
+Images already installed in the shared SDK also constrain the emulator version.
 
 Create a virtual device configuration with Android's tools after installing the
 image. To change `variant`, `arch`, or `channel`, reinstall the tool with
