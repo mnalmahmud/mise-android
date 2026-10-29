@@ -26,6 +26,25 @@ function M.is_sdk(tool)
 	return tool == "sdk" or tool:sub(1, 4) == "sdk/"
 end
 
+function M.tool(value)
+	M.package(value)
+	if value == "platforms" or value:match("^platforms/") then
+		error("Use android:sdk with the Android API level")
+	end
+	if value == "system-images" or value:match("^system%-images/") then
+		error("Use android:system-image with the Android API level")
+	end
+	return value
+end
+
+function M.image_arch(architecture)
+	local arch = ({ amd64 = "x86_64", x86_64 = "x86_64", arm64 = "arm64-v8a", aarch64 = "arm64-v8a" })[architecture]
+	if not arch then
+		error("Choose an image architecture with arch")
+	end
+	return arch
+end
+
 function M.revision(value)
 	if type(value) ~= "string" then
 		error("Android versions must be strings")
@@ -124,6 +143,9 @@ function M.options(raw, tool)
 		error("Tool settings must be a table")
 	end
 	local allowed = { channel = true, packages = true, timeout = true, repository_url = true }
+	if tool == "system-image" then
+		allowed.variant, allowed.arch = true, true
+	end
 	for key in pairs(raw) do
 		if not allowed[key] then
 			error("Unknown Android setting: " .. tostring(key))
@@ -150,7 +172,7 @@ function M.options(raw, tool)
 			error("packages must be a table of names and versions")
 		end
 		for name, version in pairs(raw.packages) do
-			M.package(name)
+			M.tool(name)
 			if M.is_sdk(name) then
 				error("An SDK cannot include another SDK")
 			end
@@ -161,7 +183,19 @@ function M.options(raw, tool)
 	if raw.repository_url ~= nil then
 		repository_url = M.url(raw.repository_url)
 	end
-	return { channel = channel, timeout = timeout, packages = packages, repository_url = repository_url }
+	local result = { channel = channel, timeout = timeout, packages = packages, repository_url = repository_url }
+	if tool == "system-image" then
+		local variant = raw.variant == nil and "google_apis" or raw.variant
+		if type(variant) ~= "string" or not variant:match("^[%w_][%w_%-]*$") then
+			error("variant must be an Android image variant, such as google_apis")
+		end
+		local arch = raw.arch == nil and M.image_arch(RUNTIME.archType) or raw.arch
+		if arch ~= "x86" and arch ~= "x86_64" and arch ~= "arm64-v8a" and arch ~= "armeabi-v7a" then
+			error("arch must be x86, x86_64, arm64-v8a, or armeabi-v7a")
+		end
+		result.variant, result.arch = variant, arch
+	end
+	return result
 end
 
 function M.quote(value)

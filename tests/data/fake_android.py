@@ -15,6 +15,12 @@ CATALOG = [
     ("build-tools/36.0.0", "36.0.0"),
     ("platforms/android-36", "3"),
     ("platforms/android-37", "1"),
+    ("system-images/android-36/google_apis/x86_64", "3"),
+    ("system-images/android-36/google_apis/x86_64", "5"),
+    ("system-images/android-36/google_apis/arm64-v8a", "5"),
+    ("system-images/android-37/google_apis/x86_64", "1"),
+    ("system-images/android-37/google_apis/arm64-v8a", "1"),
+    ("system-images/android-36/google_apis_playstore/x86_64", "2"),
 ]
 
 

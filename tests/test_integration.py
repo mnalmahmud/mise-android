@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,76 @@ class MiseIntegrationTests(unittest.TestCase):
         self.mise("uninstall", "android:platform-tools@37.0.1")
         self.assertFalse(platform_tools.exists())
         self.assertTrue(ndk.is_dir())
+
+    def write_image_config(self, **options):
+        settings = {"version": "36", "repository_url": self.repository.as_uri(), **options}
+        fields = ",".join(f"{key}={json.dumps(value)}" for key, value in settings.items())
+        self.config.write_text(
+            '[settings]\nexperimental=true\n[tools]\n"android:system-image"={' + fields + "}\n"
+        )
+
+    def test_system_image_selects_api_latest_revision_and_host_cpu(self):
+        self.write_image_config()
+        self.assertEqual(
+            self.mise("ls-remote", "android:system-image").stdout.splitlines(), ["36", "37"]
+        )
+        self.mise("install", "android:system-image")
+        installed = Path(self.mise("where", "android:system-image").stdout.strip())
+        arch = "arm64-v8a" if platform.machine().lower() in {"arm64", "aarch64"} else "x86_64"
+        package = f"system-images/android-36/google_apis/{arch}"
+        record = json.loads((installed / ".mise-android-package.json").read_text())
+        self.assertEqual(record["components"][0]["package"], package)
+        self.assertEqual(record["components"][0]["revision"], "5")
+        self.assertEqual(record["arch"], arch)
+        self.assertTrue((installed / "sdk" / package).is_dir())
+        values = self.environment_values()
+        self.assertNotIn("ANDROID_HOME", values)
+        self.assertNotIn("ANDROID_NDK_HOME", values)
+        self.assertNotIn(str(installed / "sdk" / package), values["PATH"].split(os.pathsep))
+        before = {path: path.stat().st_mtime_ns for path in installed.rglob("*")}
+        (self.bin / "android").unlink()
+        self.repository.unlink()
+        self.mise("cache", "clear", "android")
+        self.environment_values()
+        self.assertEqual(before, {path: path.stat().st_mtime_ns for path in installed.rglob("*")})
+
+    def test_image_overrides_require_reinstallation_when_changed(self):
+        self.write_image_config(variant="google_apis_playstore", arch="x86_64")
+        self.mise("install", "android:system-image")
+        installed = Path(self.mise("where", "android:system-image").stdout.strip())
+        self.assertTrue(
+            (installed / "sdk/system-images/android-36/google_apis_playstore/x86_64").is_dir()
+        )
+        self.write_image_config(variant="google_apis", arch="x86_64")
+        self.assertIn("System image settings changed", self.mise("env", check=False).stderr)
+        self.mise("install", "--force", "android:system-image")
+        self.assertTrue((installed / "sdk/system-images/android-36/google_apis/x86_64").is_dir())
+        self.write_image_config(variant="google_apis", arch="arm64-v8a")
+        self.assertIn("System image settings changed", self.mise("env", check=False).stderr)
+
+    def test_removed_tool_names_and_revision_setting_are_rejected(self):
+        for name in ["platforms/android-36", "system-images/android-36/google_apis/x86_64"]:
+            self.config.write_text("[settings]\nexperimental=true\n")
+            result = self.mise("ls-remote", f"android:{name}", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Use android:", result.stderr)
+        self.write_image_config(revision="3")
+        result = self.mise("install", "android:system-image", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown Android setting: revision", result.stderr)
+        self.assertFalse((self.root / "calls.jsonl").exists())
+
+    def test_unavailable_image_choices_do_not_start_installer(self):
+        for settings in [
+            {"variant": "unavailable"},
+            {"arch": "x86"},
+            {"version": "99", "arch": "x86_64"},
+        ]:
+            self.write_image_config(**settings)
+            self.mise("cache", "clear", "android")
+            result = self.mise("install", "android:system-image", check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / "calls.jsonl").exists())
 
     def test_sdk_can_pin_a_preview_component_from_canary(self):
         self.write_config(ndk="31.0.1-rc.2")

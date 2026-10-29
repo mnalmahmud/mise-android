@@ -17,6 +17,7 @@ Add this to your project's `mise.toml`:
 ```toml
 [settings]
 experimental = true
+minimum_release_age_excludes = ["android:*"]
 
 [plugins]
 "vfox-backend:android" = "https://github.com/mnalmahmud/mise-android"
@@ -24,6 +25,9 @@ experimental = true
 [tools]
 "android:sdk" = "36"
 ```
+
+Google's package lists omit release dates. The Android exclusion skips its release-age
+check while keeping the checks for other tools.
 
 Run `mise install` to install SDK platform 36.
 
@@ -79,8 +83,7 @@ and `ANDROID_HOME`.
 | `android:sdk`, `android:sdk/NAME` | SDK platform number, such as `36` |
 | `android:platform-tools`, `android:emulator` | Tool version |
 | `android:ndk`, `android:build-tools`, `android:cmdline-tools`, `android:cmake` | Tool version |
-| `android:platforms/android-36` | Release of that platform package |
-| `android:system-images/android-36/google_apis/x86_64` | Release of that emulator image |
+| `android:system-image` | Android API level, such as `36` |
 
 Find versions available for your machine:
 
@@ -91,12 +94,44 @@ mise ls-remote android:ndk
 For a preview release, set `channel = "beta"` or `channel = "canary"` and use its
 full version from the list.
 
+## System images
+
+Choose the Android version to run in an emulator:
+
+```toml
+"android:system-image" = "36"
+```
+
+This installs the newest available image revision for Android 36, using the
+`google_apis` variant and your machine's CPU architecture. `google_apis` includes
+Google Play services. To choose a variant or architecture explicitly:
+
+```toml
+"android:system-image" = { version = "36", variant = "google_apis_playstore", arch = "x86_64" }
+```
+
+`google_apis_playstore` includes the Play Store. Architecture defaults to `x86_64`
+on x64 machines and `arm64-v8a` on ARM64 machines. Available images depend on the
+API level, variant, and architecture.
+
+The emulator and system image are installed separately. A virtual device also
+needs a device configuration. Individual images keep their own folders; use
+`android:sdk` for an SDK folder managed by mise.
+
+After changing `variant` or `arch`, or to refresh the image revision, run:
+
+```sh
+mise install --force android:system-image
+```
+
 ## Settings
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `packages` | Empty | Additional tools and versions for `android:sdk` |
 | `channel` | `"stable"` | `stable`, `beta`, or `canary` releases |
+| `variant` | `"google_apis"` | Image variant for `android:system-image` |
+| `arch` | Host CPU | Image architecture for `android:system-image` |
 | `timeout` | `1800` | Installer time limit in seconds, from 1 to 86400 |
 | `repository_url` | Google's package list | Read package information from an HTTPS address or absolute local `file://` address |
 

@@ -7,6 +7,7 @@ function PLUGIN:BackendListTools(ctx)
 			{ name = "build-tools", description = "Android SDK build tools" },
 			{ name = "cmdline-tools", description = "Legacy Android SDK command-line tools" },
 			{ name = "emulator", description = "Android emulator" },
+			{ name = "system-image", description = "Android system image for an API level" },
 		},
 	}
 end

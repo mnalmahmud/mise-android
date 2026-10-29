@@ -5,13 +5,14 @@ local repositories = {}
 M.default_url = "https://dl.google.com/android/repository/repository2-3.xml"
 
 function M.repository_url(tool, options)
-	if tool:sub(1, 14) == "system-images/" then
-		local api, tag, abi = tool:match("^system%-images/([^/]+)/([^/]+)/([^/]+)$")
-		if not api or not abi then
-			error("System images need system-images/API/TAG/ABI")
-		end
+	common.tool(tool)
+	if tool == "system-image" then
 		return options.repository_url
-			or ("https://dl.google.com/android/repository/sys-img/" .. tag .. "/sys-img2-3.xml")
+			or (
+				"https://dl.google.com/android/repository/sys-img/"
+				.. (options.variant or "google_apis")
+				.. "/sys-img2-3.xml"
+			)
 	end
 	return options.repository_url or M.default_url
 end
@@ -64,10 +65,19 @@ local function package_revision(node, path)
 	return common.revision(result)
 end
 
-local function select_version(path, tool)
+local function select_version(path, tool, options, architecture)
 	if common.is_sdk(tool) then
 		local api = path:match("^platforms/android%-(%d[%d%.]*)$")
 		return api and common.revision(api) or nil
+	elseif tool == "system-image" then
+		local api, variant, arch = path:match("^system%-images/android%-(%d[%d%.]*)/([^/]+)/([^/]+)$")
+		if
+			api
+			and variant == (options.variant or "google_apis")
+			and arch == (options.arch or common.image_arch(architecture))
+		then
+			return common.revision(api)
+		end
 	elseif common.families[tool] then
 		local family, version = path:match("^([^/]+)/([^/]+)$")
 		if family == tool and version ~= "latest" then
@@ -88,8 +98,8 @@ local function absolute_url(base, path)
 	return (base:match("^(.*)/") or base) .. "/" .. path
 end
 
-local function versions(root, tool, channel, system, architecture, url)
-	common.package(tool)
+local function versions(root, tool, channel, system, architecture, url, options)
+	common.tool(tool)
 	if root.name ~= "sdk-repository" and root.name ~= "sdk-sys-img" then
 		error("Not an Android package list")
 	end
@@ -98,7 +108,7 @@ local function versions(root, tool, channel, system, architecture, url)
 	for _, node in ipairs(root.children) do
 		if node.name == "remotePackage" then
 			local path = (node.attrs.path or ""):gsub(";", "/")
-			local selected = select_version(path, tool)
+			local selected = select_version(path, tool, options or {}, architecture)
 			if selected ~= nil then
 				common.package(path)
 				local channel_node = xml.child(node, "channelRef")
@@ -129,7 +139,11 @@ local function versions(root, tool, channel, system, architecture, url)
 							}
 							local previous = result[selected]
 							if previous then
-								if common.is_sdk(tool) and previous.package == path and previous.revision ~= actual then
+								if
+									(common.is_sdk(tool) or tool == "system-image")
+									and previous.package == path
+									and previous.revision ~= actual
+								then
 									if common.less(previous.revision, actual) then
 										result[selected] = package
 									end
@@ -156,14 +170,15 @@ local function versions(root, tool, channel, system, architecture, url)
 	return result
 end
 
-function M.parse(data, tool, channel, system, architecture, url)
+function M.parse(data, tool, channel, system, architecture, url, options)
 	return versions(
 		xml.parse(data),
 		tool,
 		channel or "stable",
 		system or RUNTIME.osType,
 		architecture or RUNTIME.archType,
-		url or M.default_url
+		url or M.default_url,
+		options
 	)
 end
 
@@ -172,7 +187,7 @@ function M.versions(tool, options)
 	if not repositories[url] then
 		repositories[url] = xml.parse(common.fetch(url))
 	end
-	return versions(repositories[url], tool, options.channel, RUNTIME.osType, RUNTIME.archType, url)
+	return versions(repositories[url], tool, options.channel, RUNTIME.osType, RUNTIME.archType, url, options)
 end
 
 return M

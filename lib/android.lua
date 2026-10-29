@@ -11,7 +11,7 @@ local function request(ctx, installed)
 	if RUNTIME.osType ~= "linux" and RUNTIME.osType ~= "darwin" then
 		error("mise-android currently supports Linux and macOS")
 	end
-	local tool = common.package(ctx.tool)
+	local tool = common.tool(ctx.tool)
 	local options = common.options(ctx.options, tool)
 	if installed then
 		if type(ctx.install_path) ~= "string" or ctx.install_path:sub(1, 1) ~= "/" then
@@ -73,6 +73,7 @@ function M.resolve_cli()
 	end
 	local temporary = common.temp(directory)
 	local ok, message = pcall(function()
+		print("Downloading " .. url)
 		common.download(url, temporary, 67108864)
 		if common.sha256(temporary) ~= expected then
 			error("Android CLI checksum mismatch; download was not installed")
@@ -156,6 +157,7 @@ function M.install(ctx)
 	if file.stat(sdk) then
 		error("SDK folder already exists; reinstall through mise: " .. sdk)
 	end
+	print("resolve packages")
 	local packages = M.plan(tool, common.revision(ctx.version), options)
 	local executable = M.resolve_cli()
 	common.mkdir(sdk)
@@ -172,7 +174,9 @@ function M.install(ctx)
 	if options.channel ~= "stable" then
 		arguments[#arguments + 1] = "--" .. options.channel
 	end
+	print("download / install SDK packages")
 	common.exec(arguments, options.timeout)
+	print("verify SDK packages")
 	for _, package in ipairs(packages) do
 		M.verify(sdk, package)
 	end
@@ -182,6 +186,8 @@ function M.install(ctx)
 		version = common.revision(ctx.version),
 		channel = options.channel,
 		packages = options.packages,
+		variant = options.variant,
+		arch = options.arch,
 		components = packages,
 	}) .. "\n")
 	return {}
@@ -201,6 +207,9 @@ function M.environment(ctx)
 	local stored = common.options({ channel = manifest.channel, packages = manifest.packages })
 	if stored.channel ~= options.channel then
 		error("Release channel changed; reinstall this tool")
+	end
+	if tool == "system-image" and (manifest.variant ~= options.variant or manifest.arch ~= options.arch) then
+		error("System image settings changed; reinstall this tool")
 	end
 	for _, packages in ipairs({ stored.packages, options.packages }) do
 		for name in pairs(packages) do

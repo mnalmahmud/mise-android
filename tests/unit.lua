@@ -155,8 +155,12 @@ check("SDK platform versions", function()
 	equal(values["36"].revision, "2")
 	equal(values["34"].revision, "3")
 end)
-check("exact platform package versions", function()
-	assert(catalog.parse(sample, "platforms/android-34", "stable", "linux", "amd64")["2"])
+check("raw platform and image tool names are rejected", function()
+	for _, tool in ipairs({ "platforms/android-34", "system-images/android-36/google_apis/x86_64" }) do
+		rejects(function()
+			catalog.parse(sample, tool, "stable", "linux", "amd64")
+		end)
+	end
 end)
 check("previews excluded from stable", function()
 	local stable = catalog.parse(sample, "ndk", "stable", "linux", "amd64")
@@ -189,12 +193,48 @@ check("invalid package lists", function()
 end)
 check("system image address", function()
 	equal(
-		catalog.repository_url("system-images/android-36/google_apis/x86_64", {}),
+		catalog.repository_url("system-image", common.options({}, "system-image")),
 		"https://dl.google.com/android/repository/sys-img/google_apis/sys-img2-3.xml"
 	)
+	equal(
+		catalog.repository_url("system-image", common.options({ variant = "google_apis_playstore" }, "system-image")),
+		"https://dl.google.com/android/repository/sys-img/google_apis_playstore/sys-img2-3.xml"
+	)
+end)
+check("image defaults and architecture names", function()
+	equal(common.options({}, "system-image").variant, "google_apis")
+	for _, host in ipairs({ "amd64", "x86_64" }) do
+		equal(common.image_arch(host), "x86_64")
+	end
+	for _, host in ipairs({ "arm64", "aarch64" }) do
+		equal(common.image_arch(host), "arm64-v8a")
+	end
+	equal(common.options({ arch = "x86_64" }, "system-image").arch, "x86_64")
+end)
+check("image settings validated and scoped to images", function()
+	for _, options in ipairs({ { variant = "../x" }, { variant = false }, { arch = "amd64" }, { revision = "3" } }) do
+		rejects(function()
+			common.options(options, "system-image")
+		end)
+	end
 	rejects(function()
-		catalog.repository_url("system-images/android-36/google_apis", {})
+		common.options({ variant = "google_apis" }, "sdk")
 	end)
+end)
+check("image API levels select latest revisions for variant and CPU", function()
+	local source = read(root .. "/tests/data/system-images.xml")
+	local images = catalog.parse(source, "system-image", "stable", "linux", "amd64")
+	equal(images["36"].revision, "5")
+	equal(images["36"].package, "system-images/android-36/google_apis/x86_64")
+	equal(images["37"].revision, "1")
+	local arm = catalog.parse(source, "system-image", "stable", "darwin", "arm64")
+	equal(arm["36"].package, "system-images/android-36/google_apis/arm64-v8a")
+	local play =
+		catalog.parse(source, "system-image", "stable", "linux", "amd64", nil, { variant = "google_apis_playstore" })
+	equal(play["36"].revision, "2")
+	assert(not play["37"])
+	local override = catalog.parse(source, "system-image", "stable", "darwin", "arm64", nil, { arch = "x86_64" })
+	equal(override["36"].package, images["36"].package)
 end)
 check("CLI platforms include Linux ARM64", function()
 	equal(android.platform("linux", "aarch64"), "linux_arm64")
@@ -221,8 +261,11 @@ check("plan aliases, defaults, missing packages, and conflicting revisions", fun
 		catalog.versions = function(tool)
 			if common.is_sdk(tool) then
 				return { ["36"] = { package = "platforms/android-36", revision = "2" } }
-			elseif tool == "platforms/android-36" then
-				return { ["1"] = { package = tool, revision = "1" } }
+			elseif tool == "ndk/30.0.1" then
+				return {
+					["30.0.1"] = { package = tool, revision = "30.0.1" },
+					["1"] = { package = tool, revision = "1" },
+				}
 			else
 				return { ["30.0.1"] = { package = "ndk/30.0.1", revision = "30.0.1" } }
 			end
@@ -244,7 +287,8 @@ check("plan aliases, defaults, missing packages, and conflicting revisions", fun
 				"sdk",
 				"36",
 				common.options({ packages = {
-					["platforms/android-36"] = "1",
+					ndk = "30.0.1",
+					["ndk/30.0.1"] = "1",
 				} })
 			)
 		end)
