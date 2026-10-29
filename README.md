@@ -10,7 +10,7 @@ on their own.
 - mise 2026.10.19 or newer.
 - Linux or macOS, on x64 or ARM64.
 
-Also needs `bash`, `curl`, and `sha256sum` on Linux or `shasum` on macOS. These are
+Also needs `curl` and `sha256sum` on Linux or `shasum` on macOS. These are
 common system tools. You do not need Python or a separate Lua installation.
 
 If Google's `android` command is already installed, this plugin uses it. Otherwise,
@@ -125,7 +125,7 @@ The list comes from Google and includes packages for your machine.
 | --- | --- | --- |
 | `packages` | Empty | Adds the listed tools to `android:sdk` |
 | `channel` | `"stable"` | Choose `stable`, `beta`, or `canary` releases |
-| `timeout` | `1800` | Stop an installation after this many seconds; allowed range is 1–86400 |
+| `timeout` | `1800` | Stop the installer command after this many seconds; allowed range is 1–86400 |
 | `repository_url` | Google's package list | Read the package list from another HTTPS address or a local `file://` address |
 
 For example, to use preview NDK releases:

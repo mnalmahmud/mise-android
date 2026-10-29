@@ -160,9 +160,6 @@ function M.install(ctx)
 	local executable = M.resolve_cli()
 	common.mkdir(sdk)
 	local arguments = {
-		"bash",
-		RUNTIME.pluginDirPath .. "/lib/install.sh",
-		tostring(options.timeout),
 		executable,
 		"--sdk",
 		sdk,
@@ -175,8 +172,7 @@ function M.install(ctx)
 	if options.channel ~= "stable" then
 		arguments[#arguments + 1] = "--" .. options.channel
 	end
-	-- The Bash helper handles the process group; mise's timeout is a final backstop.
-	common.exec(arguments, options.timeout + 15)
+	common.exec(arguments, options.timeout)
 	for _, package in ipairs(packages) do
 		M.verify(sdk, package)
 	end

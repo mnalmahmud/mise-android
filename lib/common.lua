@@ -173,7 +173,8 @@ function M.exec(arguments, timeout)
 	for _, value in ipairs(arguments) do
 		quoted[#quoted + 1] = M.quote(value)
 	end
-	return require("cmd").exec(table.concat(quoted, " "), { timeout = timeout or 30 })
+	-- Replace the shell so mise's timeout targets the command itself.
+	return require("cmd").exec("exec " .. table.concat(quoted, " "), { timeout = timeout or 30 })
 end
 
 function M.mkdir(path)

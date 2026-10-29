@@ -8,15 +8,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1]
 MISE = os.environ.get("MISE_BIN") or shutil.which("mise")
-ENABLED = os.environ.get("MISE_ANDROID_INTEGRATION") == "1"
 
 
-@unittest.skipUnless(ENABLED and MISE, "Set MISE_ANDROID_INTEGRATION=1 with mise on PATH")
+@unittest.skipUnless(MISE, "Install mise or set MISE_BIN to run the plugin tests")
 class MiseIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="mise android's $test ")
@@ -239,9 +239,9 @@ class MiseIntegrationTests(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "1")
         self.assertIn("Lua checks", result.stderr)
 
-    def test_python_is_not_needed_by_the_plugin(self):
+    def test_python_and_bash_are_not_needed_by_the_plugin(self):
         marker = self.root / "python-was-called"
-        for name in ["python", "python3"]:
+        for name in ["python", "python3", "bash"]:
             executable = self.bin / name
             executable.write_text(f'#!/bin/sh\ntouch "{marker}"\nexit 99\n')
             executable.chmod(0o755)
@@ -289,6 +289,36 @@ class MiseIntegrationTests(unittest.TestCase):
         result = self.mise("install", "android:sdk/project-a", check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.root / "calls.jsonl").exists())
+
+    def test_timeout_stops_the_installer_after_launcher_exec(self):
+        launcher_pid = self.root / "launcher.pid"
+        installer_pid = self.root / "installer.pid"
+        worker = (
+            "import os,time\n"
+            f"open({str(installer_pid)!r},'w').write(str(os.getpid()))\n"
+            "time.sleep(60)\n"
+        )
+        (self.bin / "android").write_text(
+            f"#!{sys.executable}\nimport os,sys\n"
+            f"open({str(launcher_pid)!r},'w').write(str(os.getpid()))\n"
+            f"os.execv(sys.executable,[sys.executable,'-c',{worker!r}])\n"
+        )
+        with self.config.open("a") as stream:
+            stream.write("timeout=1\n")
+        result = self.mise("install", "android:sdk/project-a", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("timed out", result.stderr.lower())
+        pid = int(installer_pid.read_text())
+        self.assertEqual(pid, int(launcher_pid.read_text()))
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            if time.monotonic() >= deadline:
+                self.fail("Installer command survived mise's timeout")
+            time.sleep(0.01)
 
 
 if __name__ == "__main__":

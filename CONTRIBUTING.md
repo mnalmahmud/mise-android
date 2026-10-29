@@ -1,7 +1,7 @@
 # Contributing
 
 Keep changes small, the code easy to follow, and the README accurate.
-The plugin uses the Lua interpreter included with mise and a small Bash script.
+The plugin uses the Lua interpreter included with mise.
 Python is used only to run the development tests.
 
 ## Run the checks
@@ -12,20 +12,19 @@ From the project folder:
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
-MISE_ANDROID_INTEGRATION=1 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/ruff check lib tests
 .venv/bin/ruff format --check lib tests
 mise exec stylua@2.5.2 -- stylua --check lib hooks metadata.lua tests/unit.lua
 ```
 
-The second test command runs the Lua checks and tests the plugin through mise.
+The test command runs the Lua checks and tests the plugin through mise.
 It needs `mise` on your command search path. Set `MISE_BIN` to use a different mise
 executable. You do not need a separate Lua installation.
 
 Tests use temporary folders and a small replacement for Google's `android` command.
 They must not download Android SDK packages, accept licenses, or change a real SDK.
-GitHub runs the checks on Linux and macOS with Python 3.10 and 3.14. It also tests
-both the oldest supported mise release and the current stable release.
+GitHub runs the checks on Linux and macOS with both the oldest supported mise
+release and the current stable release.
 
 ## Find the code
 
@@ -36,7 +35,6 @@ both the oldest supported mise release and the current stable release.
 | `lib/common.lua` | Check settings, compare versions, download files, and save records |
 | `lib/catalog.lua` | Read Google's package lists and find suitable versions |
 | `lib/xml.lua` | Read the XML format used by Google's lists |
-| `lib/install.sh` | Run the installer and stop it and its children if it takes too long |
 | `tests/unit.lua` | Check the Lua code inside mise's own interpreter |
 | `tests/data/` | Sample package lists and the test `android` command |
 
