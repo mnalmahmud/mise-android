@@ -316,7 +316,12 @@ class MiseIntegrationTests(unittest.TestCase):
             path.write_text(
                 path.read_text().replace(
                     '\treturn require("android")',
-                    '\tRUNTIME={osType="linux",archType="aarch64",cacheDirPath=RUNTIME.cacheDirPath}\n\treturn require("android")',
+                    '\tlocal catalog=require("catalog")\n'
+                    "\tcatalog.versions=function(tool,options)\n"
+                    "\t\tlocal url=catalog.repository_url(tool,options)\n"
+                    '\t\treturn catalog.parse(require("common").fetch(url),tool,options.channel,"linux","aarch64",url,options)\n'
+                    "\tend\n"
+                    '\treturn require("android")',
                 )
             )
         self.write_config({"ndk": "30.0.1"})
@@ -500,7 +505,8 @@ class MiseIntegrationTests(unittest.TestCase):
         root = ET.fromstring(self.repository.read_bytes())
         for node in root.findall("remotePackage"):
             if node.attrib["path"] == "platform-tools":
-                node.find("archives/archive/complete/url").text = "https://example.invalid/slow.zip"
+                for url in node.findall("archives/archive/complete/url"):
+                    url.text = "https://example.invalid/slow.zip"
         self.repository.write_bytes(ET.tostring(root))
         curl = self.bin / "curl"
         curl.write_text("#!/bin/sh\nexec sleep 60\n")
