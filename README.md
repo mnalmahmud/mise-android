@@ -1,18 +1,18 @@
 # mise-android
 
-Install Android SDKs and tools with [mise](https://mise.jdx.dev/).
+Install Android SDK packages with [mise](https://mise.jdx.dev/).
 
 ## Setup
 
 Requires mise 2026.10.19 or newer and Linux or macOS on x64 or ARM64.
 The plugin runs using Lua included with mise. Downloads use `curl`, with
-`sha256sum` on Linux or `shasum` on macOS to check the downloaded Android command.
+`sha256sum` on Linux or `shasum` on macOS to check Google's Android command.
 
 ```sh
 mise plugins install vfox-backend:android https://github.com/mnalmahmud/mise-android
 ```
 
-Add this to your project's `mise.toml`:
+Add packages to your project's `mise.toml`:
 
 ```toml
 [settings]
@@ -24,136 +24,135 @@ minimum_release_age_excludes = ["android:*"]
 
 [tools]
 "android:sdk" = "36"
+"android:platform-tools" = "latest"
 ```
 
-Google's package lists omit release dates. The Android exclusion skips its release-age
-check while keeping the checks for other tools.
+Run `mise install`. `android:sdk` installs the platform for the selected API level;
+`platform-tools` provides `adb` and `fastboot`. Google installs each package's
+required dependencies too.
 
-Run `mise install` to install SDK platform 36.
+Google's package lists omit release dates. The Android exclusion skips its
+release-age check while keeping the checks for other tools.
 
-## Choose the SDK tools
+## One SDK folder
 
-Add the tools your project needs under `packages`:
+All packages use `$MISE_DATA_DIR/android/sdk`, usually
+`~/.local/share/mise/android/sdk`. mise sets `ANDROID_HOME` to that folder.
 
-```toml
-"android:sdk" = { version = "36", packages = { platform-tools = "latest", build-tools = "36.0.0", ndk = "latest" } }
+Platforms, NDKs, build tools, and system images can share this SDK:
+
+```text
+sdk/
+├── platforms/android-35/
+├── platforms/android-36/
+├── ndk/30.0.16248370/
+├── build-tools/36.0.0/
+├── emulator/
+├── platform-tools/
+└── system-images/android-36/google_apis/x86_64/
 ```
 
-The platform is included by default. `platform-tools` adds `adb` and `fastboot`;
-`ndk` adds the tools for C and C++ builds. Use a specific version or `latest` for
-each package.
-
-After changing `packages` or `channel`, or to refresh packages set to `latest`, run:
+The emulator and platform tools each have one installed version. Installing a
+different version changes it for every project using this SDK. Activation checks
+the installed package against the project's saved request. To apply a different
+version, run, for example:
 
 ```sh
-mise install --force android:sdk
-mise exec -- adb version
+mise install --force android:emulator
 ```
 
-`latest` is chosen at installation time.
+Switching projects reads package information and sets paths. Installations and
+removals update the shared SDK.
 
-mise sets `ANDROID_HOME` to this SDK's folder and adds its commands to your command
-search path. If an NDK is included, it also sets `ANDROID_NDK_HOME` to the highest
-installed NDK version. Let mise supply these values in your project.
+## Choose packages
 
-Choose one SDK per project. Give it a name when projects need different tools for
-the same platform:
+Each package has its own tool entry:
 
 ```toml
-"android:sdk/app" = { version = "36", packages = { ndk = "latest" } }
-```
-
-Each name gets a separate installation. Use the full name when reinstalling:
-`mise install --force android:sdk/app`.
-
-## Install individual tools
-
-For example, to install an NDK:
-
-```toml
+[tools]
+"android:sdk" = "36"
+"android:platform-tools" = "latest"
+"android:build-tools" = "36.0.0"
 "android:ndk" = "30.0.16248370"
+"android:emulator" = "latest"
+"android:system-image" = "36"
 ```
 
-Individual tools get their own folders and command paths. An NDK also sets
-`ANDROID_NDK_HOME`. Use `android:sdk` for tools that need a complete SDK folder
-and `ANDROID_HOME`.
-
-| Tool name | Version selects |
+| Tool | Version selects |
 | --- | --- |
-| `android:sdk`, `android:sdk/NAME` | SDK platform number, such as `36` |
+| `android:sdk` | Android API level |
+| `android:system-image` | Android API level; newest matching image revision |
 | `android:platform-tools`, `android:emulator` | Tool version |
 | `android:ndk`, `android:build-tools`, `android:cmdline-tools`, `android:cmake` | Tool version |
-| `android:system-image` | Android API level, such as `36` |
 
-Find versions available for your machine:
+Use a specific version or `latest`. `latest` is resolved when installing. To
+refresh an installed package, run `mise install --force android:TOOL`.
+
+The selected NDK sets `ANDROID_NDK_HOME`. Google's Linux NDK builds require an x64
+host; the macOS NDK supports x64 and ARM64.
+
+List available versions:
 
 ```sh
 mise ls-remote android:ndk
 ```
 
-For a preview release, set `channel = "beta"` or `channel = "canary"` and use its
-full version from the list.
+For preview versions, set `channel = "beta"` or `channel = "canary"` and use the
+full version shown in the list.
 
 ## System images
 
-Choose the Android version to run in an emulator:
+`"android:system-image" = "36"` selects the `google_apis` image for Android 36 and
+your machine's CPU. `google_apis` includes Google Play services. Google installs
+the emulator when the image requires it.
 
-```toml
-"android:system-image" = "36"
-```
-
-This installs the newest available image revision for Android 36, using the
-`google_apis` variant and your machine's CPU architecture. `google_apis` includes
-Google Play services. To choose a variant or architecture explicitly:
+To choose the image variant or CPU explicitly:
 
 ```toml
 "android:system-image" = { version = "36", variant = "google_apis_playstore", arch = "x86_64" }
 ```
 
-`google_apis_playstore` includes the Play Store. Architecture defaults to `x86_64`
-on x64 machines and `arm64-v8a` on ARM64 machines. Available images depend on the
-API level, variant, and architecture.
+`google_apis_playstore` includes the Play Store. The default architecture is
+`x86_64` on x64 hosts and `arm64-v8a` on ARM64 hosts. Available images depend on
+the API level, variant, and architecture.
 
-The emulator and system image are installed separately. A virtual device also
-needs a device configuration. Individual images keep their own folders; use
-`android:sdk` for an SDK folder managed by mise.
+An explicit emulator version must meet the image's minimum requirement. The plugin
+checks the project's package requests before starting the installer. An image can
+upgrade an older emulator when the project leaves its version unspecified.
 
-After changing `variant` or `arch`, or to refresh the image revision, run:
+Create a virtual device configuration with Android's tools after installing the
+image. To change `variant`, `arch`, or `channel`, reinstall the tool with
+`mise install --force android:system-image`.
+
+## Removal
 
 ```sh
-mise install --force android:system-image
+mise uninstall android:sdk@36
+mise uninstall android:ndk@30.0.16248370
 ```
+
+Removal asks Google's command to remove the selected package from the SDK. Other
+packages stay in the shared folder. Removing an old mise entry for an emulator or
+platform-tools version preserves a different version currently installed there.
 
 ## Settings
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `packages` | Empty | Additional tools and versions for `android:sdk` |
 | `channel` | `"stable"` | `stable`, `beta`, or `canary` releases |
 | `variant` | `"google_apis"` | Image variant for `android:system-image` |
 | `arch` | Host CPU | Image architecture for `android:system-image` |
 | `timeout` | `1800` | Installer time limit in seconds, from 1 to 86400 |
-| `repository_url` | Google's package list | Read package information from an HTTPS address or absolute local `file://` address |
-
-`repository_url` controls the package list. Google's Android command controls
-package download locations.
-
-## Installation and removal
+| `repository_url` | Google's package list | Package metadata from HTTPS or an absolute local `file://` address |
 
 The plugin uses Google's `android` command from your command search path, or
-downloads a copy into mise's cache and checks Google's published SHA-256 checksum.
-Google's command handles SDK downloads and licenses. The plugin checks installed
-versions before saving the installation record.
+downloads a checksum-verified copy into mise's cache. Google handles package
+archives and licenses. `repository_url` controls discovery and dependency checks;
+Google's command controls package download locations.
 
-Each installation keeps its own SDK folder. Switching SDKs reads the saved record
-and updates the paths for your project. Remove an SDK with:
-
-```sh
-mise uninstall android:sdk@36
-```
-
-`mise cache clear android` clears saved version lists and downloaded copies of the
-Android command. Google's command may also save files in your Android user folder.
+`mise cache clear android` clears cached version lists and downloaded copies of
+the Android command. The SDK stays in mise's data folder. Google's command may
+also save files in your Android user folder.
 
 ## Development
 

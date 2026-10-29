@@ -1,10 +1,9 @@
 local common = require("common")
 local catalog = require("catalog")
-local xml = require("xml")
 local file = require("file")
 local json = require("json")
 local M = {}
-local manifest_name = ".mise-android-package.json"
+local sdk = require("sdk")
 local cli_base = "https://dl.google.com/android/cli/latest/"
 
 local function request(ctx, installed)
@@ -88,7 +87,7 @@ function M.resolve_cli()
 	return executable
 end
 
-local function select(tool, version, options)
+function M.plan(tool, version, options)
 	local available = catalog.versions(tool, options)
 	if version == "latest" then
 		local ordered = common.keys(available)
@@ -101,46 +100,75 @@ local function select(tool, version, options)
 	return available[version]
 end
 
-function M.plan(tool, version, options)
-	local result, selected = {}, {}
-	local function add(package)
-		local previous = selected[package.package]
-		if previous then
-			if previous.revision ~= package.revision then
-				error("An SDK cannot contain two versions of " .. package.package)
+local function project_packages(ctx, own, options)
+	local explicit = { [own.package] = { package = own, options = options } }
+	local mise = os.getenv("MISE_BIN") or "mise"
+	local tools = json.decode(common.exec({ mise, "ls", "--current", "--json", "--offline" }, 60))
+	for _, name in ipairs(common.keys(tools)) do
+		local tool = name:match("^android:(.+)$")
+		if tool then
+			common.tool(tool)
+			local versions = tools[name]
+			local info = json.decode(common.exec({ mise, "tool", name, "--json" }, 60))
+			local raw = {}
+			for _, key in ipairs({ "channel", "timeout", "repository_url", "variant", "arch" }) do
+				if info.tool_options[key] ~= nil then
+					raw[key] = info.tool_options[key]
+				end
 			end
-		else
-			selected[package.package] = package
-			result[#result + 1] = package
+			local peer_options = common.options(raw, tool)
+			local configured = false
+			for _, entry in ipairs(versions) do
+				configured = configured or entry.version == ctx.version
+			end
+			for _, entry in ipairs(versions) do
+				if tool ~= ctx.tool or configured then
+					local package = tool == ctx.tool and entry.version == ctx.version and own
+						or M.plan(tool, entry.version, peer_options)
+					local previous = explicit[package.package]
+					if previous and previous.package.revision ~= package.revision then
+						error("The SDK cannot contain two versions of " .. package.package)
+					end
+					explicit[package.package] =
+						{ package = package, options = package == own and options or peer_options }
+				end
+			end
 		end
 	end
-	add(select(tool, version, options))
-	for _, name in ipairs(common.keys(options.packages)) do
-		add(select(name, options.packages[name], options))
-	end
-	return result
+	return explicit
 end
 
-function M.verify(sdk, package)
-	local path = sdk .. "/" .. package.package
-	local properties = common.read(path .. "/source.properties")
-	local actual
-	for line in properties:gmatch("[^\r\n]+") do
-		local value = line:match("^%s*Pkg%.Revision%s*=%s*(.-)%s*$")
-		if value then
-			actual = common.revision(value)
+function M.preflight(explicit)
+	local seen = {}
+	local function check(package, options)
+		local identity = package.package .. "@" .. package.revision
+		if seen[identity] then
+			return
+		end
+		seen[identity] = true
+		for _, dependency in ipairs(package.dependencies or {}) do
+			local requested = explicit[dependency.package]
+			local candidate = requested and requested.package or sdk.installed(dependency.package)
+			if not requested and (not candidate or common.less(candidate.revision, dependency.revision)) then
+				candidate = M.plan(dependency.package, "latest", options)
+			end
+			if common.less(candidate.revision, dependency.revision) then
+				error(
+					package.package
+						.. " requires "
+						.. dependency.package
+						.. " >= "
+						.. dependency.revision
+						.. "; the requested version is "
+						.. candidate.revision
+				)
+			end
+			check(candidate, requested and requested.options or options)
 		end
 	end
-	if actual ~= package.revision then
-		error("Expected " .. package.package .. "@" .. package.revision .. ", found " .. tostring(actual))
-	end
-	if file.exists(path .. "/package.xml") then
-		local root = xml.parse(common.read(path .. "/package.xml"))
-		local local_package = root.name == "localPackage" and root or xml.child(root, "localPackage")
-		local identity = local_package and local_package.attrs.path
-		if not identity or identity:gsub(";", "/") ~= package.package then
-			error("Installed package has the wrong name: " .. path)
-		end
+	for _, name in ipairs(common.keys(explicit)) do
+		local entry = explicit[name]
+		check(entry.package, entry.options)
 	end
 end
 
@@ -153,109 +181,65 @@ end
 
 function M.install(ctx)
 	local tool, options = request(ctx, true)
-	local sdk = ctx.install_path .. "/sdk"
-	if file.stat(sdk) then
-		error("SDK folder already exists; reinstall through mise: " .. sdk)
-	end
 	print("resolve packages")
-	local packages = M.plan(tool, common.revision(ctx.version), options)
+	local package = M.plan(tool, common.revision(ctx.version), options)
+	M.preflight(project_packages(ctx, package, options))
 	local executable = M.resolve_cli()
-	common.mkdir(sdk)
+	common.mkdir(sdk.root())
 	local arguments = {
 		executable,
 		"--sdk",
-		sdk,
+		sdk.root(),
 		"sdk",
 		"install",
+		"--force",
+		package.package .. "@" .. common.cli_revision(package.revision),
 	}
-	for _, package in ipairs(packages) do
-		arguments[#arguments + 1] = package.package .. "@" .. package.revision
-	end
 	if options.channel ~= "stable" then
 		arguments[#arguments + 1] = "--" .. options.channel
 	end
 	print("download / install SDK packages")
-	common.exec(arguments, options.timeout)
-	print("verify SDK packages")
-	for _, package in ipairs(packages) do
-		M.verify(sdk, package)
+	local ok, message = pcall(common.exec, arguments, options.timeout)
+	sdk.changed()
+	if not ok then
+		error(message)
 	end
-	common.atomic(ctx.install_path .. "/" .. manifest_name, json.encode({
-		schema = 1,
-		tool = tool,
-		version = common.revision(ctx.version),
-		channel = options.channel,
-		packages = options.packages,
-		variant = options.variant,
-		arch = options.arch,
-		components = packages,
-	}) .. "\n")
+	print("verify SDK packages")
+	local actual = sdk.verify(package)
+	sdk.verify_dependencies(package)
+	sdk.verify_dependencies(actual)
+	sdk.save(ctx, options, package)
 	return {}
 end
 
 function M.environment(ctx)
-	local tool, options = request(ctx, true)
-	local manifest = json.decode(common.read(ctx.install_path .. "/" .. manifest_name))
-	if
-		type(manifest) ~= "table"
-		or manifest.schema ~= 1
-		or manifest.tool ~= tool
-		or manifest.version ~= common.revision(ctx.version)
-	then
-		error("Installation record does not match " .. tool .. "; reinstall it")
+	local _, options = request(ctx, true)
+	return sdk.environment(ctx, options)
+end
+
+function M.uninstall(ctx)
+	request(ctx, true)
+	local record = sdk.record(ctx)
+	if not record then
+		return
 	end
-	local stored = common.options({ channel = manifest.channel, packages = manifest.packages })
-	if stored.channel ~= options.channel then
-		error("Release channel changed; reinstall this tool")
+	local actual = sdk.installed(record.package.package)
+	-- An old mise receipt must not remove a newer shared package.
+	if not actual or actual.revision ~= record.package.revision then
+		return
 	end
-	if tool == "system-image" and (manifest.variant ~= options.variant or manifest.arch ~= options.arch) then
-		error("System image settings changed; reinstall this tool")
+	local ok, message = pcall(common.exec, {
+		M.resolve_cli(),
+		"--sdk",
+		sdk.root(),
+		"sdk",
+		"remove",
+		record.package.package,
+	}, common.options(ctx.options, ctx.tool).timeout)
+	sdk.changed()
+	if not ok then
+		error(message)
 	end
-	for _, packages in ipairs({ stored.packages, options.packages }) do
-		for name in pairs(packages) do
-			if stored.packages[name] ~= options.packages[name] then
-				error("SDK packages changed; reinstall this tool")
-			end
-		end
-	end
-	if type(manifest.components) ~= "table" or #manifest.components == 0 then
-		error("Installation record has no packages; reinstall this tool")
-	end
-	local sdk, values, paths, ndk = ctx.install_path .. "/sdk", {}, {}, nil
-	local function value(key, path)
-		values[#values + 1] = { key = key, value = path }
-	end
-	if common.is_sdk(tool) then
-		value("ANDROID_HOME", sdk)
-	end
-	for _, package in ipairs(manifest.components) do
-		if type(package) ~= "table" then
-			error("Invalid installed package record")
-		end
-		common.package(package.package)
-		common.revision(package.revision)
-		local path = sdk .. "/" .. package.package
-		if not common.is_dir(path) then
-			error("Installed package is missing: " .. path .. "; reinstall it")
-		end
-		local family = package.package:match("^[^/]+")
-		if family == "ndk" and (not ndk or common.less(ndk.revision, package.revision)) then
-			ndk = package
-		end
-		if family == "cmdline-tools" or family == "cmake" then
-			path = path .. "/bin"
-		elseif family == "platforms" or family == "system-images" or family == "sources" then
-			path = nil
-		end
-		if path and not paths[path] and common.is_dir(path) then
-			paths[path] = true
-			value("PATH", path)
-		end
-	end
-	if ndk then
-		value("ANDROID_NDK_HOME", sdk .. "/" .. ndk.package)
-	end
-	return { env_vars = values }
 end
 
 return M

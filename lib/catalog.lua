@@ -17,7 +17,7 @@ function M.repository_url(tool, options)
 	return options.repository_url or M.default_url
 end
 
-local function archive(node, system, architecture)
+local function archive(node, system, architecture, path)
 	local host = ({ linux = "linux", darwin = "macosx" })[system]
 	local arch = ({ amd64 = "x64", x86_64 = "x64", arm64 = "aarch64", aarch64 = "aarch64" })[architecture]
 	if not node or not host or not arch then
@@ -27,6 +27,10 @@ local function archive(node, system, architecture)
 		if item.name == "archive" then
 			local os_name, cpu, bits =
 				xml.text(item, "host-os"), xml.text(item, "host-arch"), xml.text(item, "host-bits")
+			-- Google's Linux NDK archives omit host-arch but contain x86-64 binaries.
+			if cpu == "" and os_name == "linux" and path:match("^ndk/") then
+				cpu = "x64"
+			end
 			if (os_name == "" or os_name == host) and (cpu == "" or cpu == arch) and (bits == "" or bits == "64") then
 				local complete = xml.child(item, "complete")
 				if complete and xml.text(complete, "url") ~= "" then
@@ -63,6 +67,22 @@ local function package_revision(node, path)
 		result = result .. "-rc." .. preview
 	end
 	return common.revision(result)
+end
+
+function M.dependencies(node)
+	local result = {}
+	local dependencies = xml.child(node, "dependencies")
+	for _, dependency in ipairs(dependencies and dependencies.children or {}) do
+		if dependency.name == "dependency" then
+			local path = common.package((dependency.attrs.path or ""):gsub(";", "/"))
+			local minimum = xml.child(dependency, "min-revision")
+			result[#result + 1] = {
+				package = path,
+				revision = minimum and package_revision(minimum, path) or "0",
+			}
+		end
+	end
+	return result
 end
 
 local function select_version(path, tool, options, architecture)
@@ -124,13 +144,14 @@ local function versions(root, tool, channel, system, architecture, url, options)
 						if actual:find("-", 1, true) and not selected:find("-", 1, true) then
 							selected = selected .. actual:match("(%-.*)$")
 						end
-						local download = archive(xml.child(node, "archives"), system, architecture)
+						local download = archive(xml.child(node, "archives"), system, architecture, path)
 						if download then
 							local checksum = xml.child(download, "checksum")
 							local package = {
 								package = path,
 								revision = actual,
 								version = selected,
+								dependencies = M.dependencies(node),
 								download = {
 									url = absolute_url(url, xml.text(download, "url")),
 									checksum_type = checksum and (checksum.attrs.type or "sha1") or "",

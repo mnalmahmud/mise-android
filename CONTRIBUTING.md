@@ -23,7 +23,8 @@ release.
 | Location | Purpose |
 | --- | --- |
 | `hooks/` | Receive calls from mise |
-| `lib/android.lua` | Find the Android command, install packages, and return project paths |
+| `lib/android.lua` | Find the Android command, check project requests, and install or remove packages |
+| `lib/sdk.lua` | Locate the shared SDK, read installed packages, save receipts, and return project paths |
 | `lib/common.lua` | Check settings, compare versions, download files, and save records |
 | `lib/catalog.lua` | Read Google's package lists and select suitable versions |
 | `lib/xml.lua` | Read the XML used by the package lists |
@@ -33,12 +34,17 @@ release.
 
 ## Making changes
 
-Resolve every requested package before starting the installer. Check installed
-versions and names before saving a successful installation record.
+Resolve project requests and check dependency minimums before starting the installer.
+Check installed versions and names before saving the tool's installation receipt.
 
-Keep SDK files inside the installation folder supplied by mise. Selecting an
-installed SDK should read its record and return paths. Keep that step read-only.
-Individual tools keep their own installation folders.
+Keep all packages in mise's shared `android/sdk` folder. Read Google's package
+metadata for installed versions and dependencies. Each mise tool entry keeps a
+receipt for its requested package. Removing an old receipt should preserve a
+different version currently installed in a shared package location.
+
+Activation reads package information and returns paths. Installation and removal
+invalidate mise's cached environment results after updating the SDK. Test a version
+change after activation has already populated that cache.
 
 Cover package-list errors, preview releases, and downloads for different machines
 when changing version selection. Cover failures and timeouts when changing

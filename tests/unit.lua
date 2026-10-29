@@ -40,6 +40,14 @@ check("version normalization", function()
 	equal(common.revision("030.00.01 rc2"), "30.0.1-rc.2")
 	equal(common.revision("1.0beta3"), "1.0-beta.3")
 end)
+check("CLI revision syntax preserves stable versions and pads previews", function()
+	equal(common.cli_revision("3"), "3")
+	equal(common.cli_revision("23.0"), "23.0")
+	equal(common.cli_revision("37.0.1"), "37.0.1")
+	equal(common.cli_revision("1-rc.2"), "1.0.0.2")
+	equal(common.cli_revision("1.2-rc.3"), "1.2.0.3")
+	equal(common.cli_revision("31.0.1-rc.2"), "31.0.1.2")
+end)
 check("preview ordering", function()
 	local values = { "30.0.1", "30.0.1-beta.1", "30.0.1-rc.1", "29.9", "30.0.1-alpha.9" }
 	table.sort(values, common.less)
@@ -89,11 +97,6 @@ check("standalone packages reject bundle options", function()
 	rejects(function()
 		common.options({ packages = {} }, "ndk")
 	end)
-end)
-check("package versions copied and normalized", function()
-	local raw = { packages = { ndk = "030.0.01 rc2" } }
-	equal(common.options(raw, "sdk").packages.ndk, "30.0.1-rc.2")
-	equal(raw.packages.ndk, "030.0.01 rc2")
 end)
 for _, url in ipairs({
 	"",
@@ -150,7 +153,7 @@ check("platform tool source and checksum", function()
 	assert(package.download.url:match("platform%-tools_r37.0.1%-linux.zip$"))
 end)
 check("SDK platform versions", function()
-	local values = catalog.parse(sample, "sdk/project", "stable", "linux", "amd64")
+	local values = catalog.parse(sample, "sdk", "stable", "linux", "amd64")
 	equal(values["36"].package, "platforms/android-36")
 	equal(values["36"].revision, "2")
 	equal(values["34"].revision, "3")
@@ -175,6 +178,27 @@ check("host-specific downloads", function()
 	for _, package in pairs(values) do
 		assert(package.download.url:find("arm64", 1, true))
 	end
+end)
+check("Linux NDK archives with omitted architecture require x64", function()
+	for _, tool in ipairs({ "ndk", "ndk/30.0.16248370" }) do
+		for _, arch in ipairs({ "arm64", "aarch64" }) do
+			rejects(function()
+				catalog.parse(sample, tool, "stable", "linux", arch)
+			end)
+		end
+		assert(catalog.parse(sample, tool, "stable", "linux", "amd64")["30.0.16248370"])
+	end
+end)
+check("macOS NDK universal archives still support ARM64", function()
+	local values = catalog.parse(sample, "ndk", "stable", "darwin", "arm64")
+	assert(values["30.0.16248370"].download.url:match("darwin.zip$"))
+end)
+check("explicit NDK architecture takes precedence over omitted-architecture default", function()
+	local source = sample:gsub("<host%-os>linux</host%-os>", "<host-os>linux</host-os><host-arch>aarch64</host-arch>")
+	assert(catalog.parse(source, "ndk", "stable", "linux", "aarch64")["30.0.16248370"])
+	rejects(function()
+		catalog.parse(source, "ndk", "stable", "linux", "amd64")
+	end)
 end)
 check("unsupported host is rejected", function()
 	rejects(function()
@@ -255,46 +279,48 @@ check("CLI checksum formats", function()
 		end)
 	end
 end)
-check("plan aliases, defaults, missing packages, and conflicting revisions", function()
+check("plan selects one requested package and latest version", function()
 	local previous = catalog.versions
 	local ok, message = pcall(function()
-		catalog.versions = function(tool)
-			if common.is_sdk(tool) then
-				return { ["36"] = { package = "platforms/android-36", revision = "2" } }
-			elseif tool == "ndk/30.0.1" then
-				return {
-					["30.0.1"] = { package = tool, revision = "30.0.1" },
-					["1"] = { package = tool, revision = "1" },
-				}
-			else
-				return { ["30.0.1"] = { package = "ndk/30.0.1", revision = "30.0.1" } }
-			end
+		catalog.versions = function()
+			return {
+				["29.0.1"] = { package = "ndk/29.0.1", revision = "29.0.1" },
+				["30.0.1"] = { package = "ndk/30.0.1", revision = "30.0.1" },
+			}
 		end
-		equal(#android.plan("sdk", "36", common.options({})), 1)
-		equal(#android.plan(
-			"sdk",
-			"36",
-			common.options({ packages = {
-				ndk = "30.0.1",
-				["ndk/30.0.1"] = "30.0.1",
-			} })
-		), 2)
+		equal(android.plan("ndk", "latest", common.options({})).revision, "30.0.1")
+		equal(android.plan("ndk", "29.0.1", common.options({})).revision, "29.0.1")
 		rejects(function()
-			android.plan("sdk", "99", common.options({}))
-		end)
-		rejects(function()
-			android.plan(
-				"sdk",
-				"36",
-				common.options({ packages = {
-					ndk = "30.0.1",
-					["ndk/30.0.1"] = "1",
-				} })
-			)
+			android.plan("ndk", "99", common.options({}))
 		end)
 	end)
 	catalog.versions = previous
 	assert(ok, message)
+end)
+check("dependency minimum revisions are parsed", function()
+	local node = xml.parse(
+		'<remotePackage><dependencies><dependency path="emulator"><min-revision><major>35</major><minor>4</minor><micro>9</micro></min-revision></dependency><dependency path="platform-tools"/></dependencies></remotePackage>'
+	)
+	local dependencies = catalog.dependencies(node)
+	equal(dependencies[1].package, "emulator")
+	equal(dependencies[1].revision, "35.4.9")
+	equal(dependencies[2].revision, "0")
+end)
+check("explicit emulator pins are checked before installation", function()
+	local image = {
+		package = "system-images/android-36/google_apis/x86_64",
+		revision = "7",
+		dependencies = { { package = "emulator", revision = "35.4.9" } },
+	}
+	local emulator = { package = "emulator", revision = "35.0.0" }
+	local explicit = { image = { package = image, options = {} }, emulator = { package = emulator, options = {} } }
+	rejects(function()
+		android.preflight(explicit)
+	end)
+	emulator.revision = "35.4.9"
+	android.preflight(explicit)
+	emulator.revision = "37.0.0"
+	android.preflight(explicit)
 end)
 
 print("Passed " .. count .. " Lua checks")

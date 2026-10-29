@@ -23,11 +23,14 @@ function M.package(value)
 end
 
 function M.is_sdk(tool)
-	return tool == "sdk" or tool:sub(1, 4) == "sdk/"
+	return tool == "sdk"
 end
 
 function M.tool(value)
 	M.package(value)
+	if value:match("^sdk/") then
+		error("Use android:sdk with the Android API level")
+	end
 	if value == "platforms" or value:match("^platforms/") then
 		error("Use android:sdk with the Android API level")
 	end
@@ -77,6 +80,22 @@ function M.revision(value)
 		result = result .. "-" .. kind .. "." .. tonumber(number)
 	end
 	return result
+end
+
+function M.cli_revision(value)
+	local base, preview = value:match("^(.-)%-rc%.(%d+)$")
+	if not preview then
+		return value
+	end
+	-- Google's CLI accepts previews as MAJOR.MINOR.MICRO.PREVIEW.
+	local parts = {}
+	for part in base:gmatch("%d+") do
+		parts[#parts + 1] = part
+	end
+	while #parts < 3 do
+		parts[#parts + 1] = "0"
+	end
+	return table.concat(parts, ".") .. "." .. preview
 end
 
 function M.less(left, right)
@@ -142,7 +161,7 @@ function M.options(raw, tool)
 	if type(raw) ~= "table" then
 		error("Tool settings must be a table")
 	end
-	local allowed = { channel = true, packages = true, timeout = true, repository_url = true }
+	local allowed = { channel = true, timeout = true, repository_url = true }
 	if tool == "system-image" then
 		allowed.variant, allowed.arch = true, true
 	end
@@ -163,27 +182,11 @@ function M.options(raw, tool)
 	if not timeout or timeout < 1 or timeout > 86400 then
 		error("timeout must be a whole number from 1 to 86400 seconds")
 	end
-	local packages = {}
-	if raw.packages ~= nil then
-		if tool and not M.is_sdk(tool) then
-			error("packages is only available for android:sdk")
-		end
-		if type(raw.packages) ~= "table" then
-			error("packages must be a table of names and versions")
-		end
-		for name, version in pairs(raw.packages) do
-			M.tool(name)
-			if M.is_sdk(name) then
-				error("An SDK cannot include another SDK")
-			end
-			packages[name] = version == "latest" and version or M.revision(version)
-		end
-	end
 	local repository_url
 	if raw.repository_url ~= nil then
 		repository_url = M.url(raw.repository_url)
 	end
-	local result = { channel = channel, timeout = timeout, packages = packages, repository_url = repository_url }
+	local result = { channel = channel, timeout = timeout, repository_url = repository_url }
 	if tool == "system-image" then
 		local variant = raw.variant == nil and "google_apis" or raw.variant
 		if type(variant) ~= "string" or not variant:match("^[%w_][%w_%-]*$") then
