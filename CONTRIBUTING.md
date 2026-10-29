@@ -1,74 +1,66 @@
 # Contributing
 
-Keep changes small, the code easy to follow, and the README accurate.
-The plugin uses the Lua interpreter included with mise.
-Python is used only to run the development tests.
+## Checks
 
-## Run the checks
-
-From the project folder:
+Tests use Python and a real mise executable. They run the Lua checks through mise,
+using temporary folders, local package lists, and a test Android command.
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
-.venv/bin/ruff check lib tests
-.venv/bin/ruff format --check lib tests
+.venv/bin/ruff check tests
+.venv/bin/ruff format --check tests
 mise exec stylua@2.5.2 -- stylua --check lib hooks metadata.lua tests/unit.lua
 ```
 
-The test command runs the Lua checks and tests the plugin through mise.
-It needs `mise` on your command search path. Set `MISE_BIN` to use a different mise
-executable. You do not need a separate Lua installation.
+Set `MISE_BIN` to test a particular mise executable. GitHub runs the checks on
+Linux and macOS with the oldest supported mise release and the current stable
+release.
 
-Tests use temporary folders and a small replacement for Google's `android` command.
-They must not download Android SDK packages, accept licenses, or change a real SDK.
-GitHub runs the checks on Linux and macOS with both the oldest supported mise
-release and the current stable release.
+## Code layout
 
-## Find the code
-
-| File or folder | What it does |
+| Location | Purpose |
 | --- | --- |
 | `hooks/` | Receive calls from mise |
-| `lib/android.lua` | Find the Android command, install packages, and set project paths |
+| `lib/android.lua` | Find the Android command, install packages, and return project paths |
 | `lib/common.lua` | Check settings, compare versions, download files, and save records |
-| `lib/catalog.lua` | Read Google's package lists and find suitable versions |
-| `lib/xml.lua` | Read the XML format used by Google's lists |
-| `tests/unit.lua` | Check the Lua code inside mise's own interpreter |
-| `tests/data/` | Sample package lists and the test `android` command |
+| `lib/catalog.lua` | Read Google's package lists and select suitable versions |
+| `lib/xml.lua` | Read the XML used by the package lists |
+| `tests/unit.lua` | Check Lua behavior in mise's interpreter |
+| `tests/test_integration.py` | Test complete operations through mise |
+| `tests/data/` | Sample package lists and the test Android command |
 
-## Keep these rules
+## Making changes
 
-- Find every requested package before starting an installation.
-- Check the result before saving a successful installation record.
-- Keep each SDK inside the folder mise provides for it.
-- Read files when switching SDKs; do not change them or contact Google.
-- Keep separately installed tools independent of SDKs.
-- Keep one format for installation records; this project has no older releases to support.
-- Leave the user's shell settings and existing SDKs alone.
+Resolve every requested package before starting the installer. Check installed
+versions and names before saving a successful installation record.
 
-When changing package-list handling, test missing and invalid entries, previews,
-and packages for different machines. When changing installation, test failures as
-well as success. Run the tests through mise after changing settings or how the
-plugin is called. mise passes simple settings as strings, even TOML numbers and
-booleans.
+Keep SDK files inside the installation folder supplied by mise. Selecting an
+installed SDK should read its record and return paths. Keep that step read-only.
+Individual tools keep their own installation folders.
 
-## Try a local copy
+Cover package-list errors, preview releases, and downloads for different machines
+when changing version selection. Cover failures and timeouts when changing
+installation. Run the tests through mise after changing settings or hooks. mise
+passes simple settings as strings, including TOML numbers and booleans.
 
-Use a temporary project and link this checkout:
+## Local testing
+
+Link the checkout from a temporary project:
 
 ```sh
 mise plugins link android /absolute/path/to/mise-android
 ```
 
-Add the settings and tools from the README to the temporary project's `mise.toml`.
-On mise 2026.10.19, the link command is required; a local path in `[plugins]` alone
-is not enough. Use separate mise data, cache, and state folders for manual testing,
-just as the tests do.
+Add the README's settings and tools to that project's `mise.toml`. mise 2026.10.19
+requires the link command for local testing. Use temporary mise data, cache, and
+state folders, following `tests/test_integration.py`.
 
-## Report a problem
+## Bug reports and changes
 
-Include your OS and mise version, the relevant `mise.toml` settings, the
-command you ran, and its error output. Remove private values before sharing them.
-For a code change, explain what was wrong, what changed, and which checks passed.
+Include your OS, mise version, relevant configuration, command, and error output
+in a bug report. Remove private values before sharing it.
+
+For a code change, explain the problem, resulting behavior, and checks performed.
+Update the README when the user-facing behavior changes.
